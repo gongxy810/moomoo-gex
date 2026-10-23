@@ -1,0 +1,5 @@
+moomoo-api
+pandas
+plotly
+streamlit
+streamlit-autorefresh
