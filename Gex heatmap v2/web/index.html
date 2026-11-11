@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>OpenD GEX Board</title>
+<link rel="stylesheet" href="style.css">
+<script src="vendor/lightweight-charts.standalone.production.js"></script>
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<header class="mast">
+  <div class="brand"><span class="brand-mark" aria-hidden="true">ϟ</span><span>OpenD <strong>GEX</strong></span></div>
+  <span class="quiet top-label">MARKET STRUCTURE</span>
+  <div class="spacer"></div>
+  <span id="feed-state" class="pill warn" role="status">Connecting</span>
+  <button id="connect" type="button">Data source</button>
+</header>
+<main>
+<section class="toolbar" aria-label="Dashboard filters">
+  <strong>Trinity</strong><div class="seg" id="symbols" aria-label="Focused column"></div>
+  <button id="derived" type="button" aria-pressed="true">Derived 0/0</button>
+  <label>Expiry <select id="expiry"><option value="0dte">0DTE</option><option value="front">Front</option><option value="week">Next 7 days</option></select></label>
+  <label>Strikes <select id="range"><option>20</option><option>30</option><option selected>40</option><option>50</option><option>60</option></select></label>
+  <button id="center" type="button" title="Toggle centering on Spot or King">Spot</button>
+  <label class="speed">ϟ GEX Velocity <select id="speed" aria-label="GEX velocity lookback"><option value="1">1m</option><option value="5" selected>5m</option><option value="15">15m</option><option value="30">30m</option></select></label>
+  <div class="spacer"></div>
+  <button id="refresh" type="button">Refresh</button>
+  <button id="method" type="button">Method</button>
+</section>
+<section id="notice" class="notice" role="status"></section>
+<section class="terminal" aria-label="Trinity gamma heatmap and price chart">
+  <div class="trinity" id="trinity"></div>
+  <article class="chart-panel">
+    <div class="chart-head"><div id="chart-title">SPXW —</div><div id="chart-mode-switch" class="chart-mode-switch" role="group" aria-label="SPXW price chart source"><button id="mode-gex" type="button" aria-pressed="true">GEX 图</button><button id="mode-tv" type="button" aria-pressed="false">TradingView</button></div><span id="chart-phase" class="pill">—</span><span id="tv-app-spot" hidden></span><div class="spacer"></div><span id="chart-source">OpenD · GEX 图</span><span id="tv-app-cone" hidden></span><a id="tv-open" href="https://www.tradingview.com/chart/?symbol=TVC%3ASPX" target="_blank" rel="noreferrer" title="在 TradingView 打开 TVC:SPX">在 TradingView 打开 TVC:SPX ↗</a><label class="gex-chart-only">K <select id="candle-period"><option value="1">1m</option><option value="2">2m</option><option value="5" selected>5m</option><option value="15">15m</option></select></label><button id="cone" class="gex-chart-only" type="button" aria-pressed="false">Estimated IV Cone</button></div>
+    <div id="spx-levels" class="spx-levels" hidden></div>
+    <div class="layer-controls"><label><input id="nodes" type="checkbox" checked>Nodes</label><label>Top <select id="node-top"><option>3</option><option selected>5</option><option>10</option></select></label><label>≥ King <select id="node-threshold"><option value="0">0%</option><option value="10" selected>10%</option><option value="25">25%</option><option value="50">50%</option></select></label><label><input id="walls" type="checkbox" checked>Call / Put Walls</label><label><input id="day-range" type="checkbox">Day Range</label><label><input id="two-sigma" type="checkbox">±2σ</label></div>
+    <div id="chart-message" class="chart-message" role="status"></div>
+    <div class="plot" id="plot"><div id="chart-empty" class="chart-empty" hidden><div><strong>SPX 现金分钟 K 线不可用</strong><p>OpenD 对 US..SPX 返回「暂不支持美股指数」。SPXW 原始 Levels 在图上方单独显示。</p><button id="empty-tv" type="button">查看 TradingView CFD 参考图</button></div></div></div>
+    <div id="tv-panel" class="tv-panel" hidden><div id="tv-status" class="tv-status" role="status">TradingView 图表加载中…</div><div id="tv-widget" class="tradingview-widget-container"><div class="tradingview-widget-container__widget"></div><div class="tradingview-widget-copyright"><a href="https://www.tradingview.com/symbols/SPXUSD/" target="_blank" rel="noopener nofollow">FOREXCOM:SPXUSD · S&amp;P 500 CFD 参考图</a> by TradingView</div></div></div>
+    <div class="chart-key"><span><i class="yellow"></i> +GEX</span><span><i class="purple"></i> −GEX</span><span>◇ Derived · source GEX</span><span class="gold">★ King</span><span class="wall-legend">╍ Call / Put Walls</span><span class="day-legend">— Day ±1σ</span><a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView Lightweight Charts™</a><div class="spacer"></div><button id="pin" type="button" disabled>Pin cone</button></div>
+    <div id="layer-meta" class="layer-meta"></div>
+    <form id="replay-form" class="replay-start"><label>Replay ET <input id="replay-date" type="date" required></label><input id="replay-time" type="time" value="10:00" required aria-label="Replay start time ET"><button type="submit">选起点</button><button id="replay-play" type="button">播放</button><button id="replay-step" type="button">单步</button><label>速度 <select id="replay-speed"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select></label></form>
+    <div class="replay"><label for="timeline">Replay</label><input id="timeline" type="range" min="0" max="0" value="0" disabled><span id="timeline-time">Awaiting snapshots</span><button id="latest" type="button">退出 Replay / Live</button></div>
+  </article>
+</section>
+<section id="metrics" class="metrics" aria-label="Exposure summary"></section>
+<section class="detail" aria-label="Selected symbol detail">
+  <article class="panel"><div class="panel-head"><div><small>01 / DISTRIBUTION</small><h2>Strike profile</h2></div><span class="quiet">Net GEX / USD</span></div><div id="profile"></div></article>
+  <article class="panel wide"><div class="panel-head"><div><small>02 / TERM STRUCTURE</small><h2>GEX by expiration</h2></div><span class="quiet">Strike × expiry</span></div><div id="matrix"></div></article>
+  <article class="panel"><div class="panel-head"><div><small>03 / OPEN INTEREST</small><h2>Call–Put OI</h2></div><span class="quiet">Contracts</span></div><div id="oi"></div></article>
+</section>
+<footer id="freshness" class="freshness"></footer>
+<p class="chart-attribution">TradingView Lightweight Charts™ · Copyright (с) 2025 TradingView, Inc. <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView</a></p>
+</main>
+<dialog id="symbol-dialog">
+  <div class="dialog-head"><h2>选择这一列的标的</h2><form method="dialog"><button aria-label="Close symbol selector">×</button></form></div>
+  <form id="symbol-form"><label for="symbol-input">OpenD 代码</label><input id="symbol-input" placeholder="SPY / NVDA / US.AAPL" autocomplete="off" maxlength="25"><button type="submit">确认</button></form>
+  <p id="symbol-error" role="status"></p><div id="symbol-options"></div>
+  <p class="quiet">SPX = 现金指数；SPXW = PM 结算期权。选择 SPX 会显示 SPX 价格 / SPXW 期权，不混入传统月度 SPX 合约。</p>
+</dialog>
+<dialog id="connect-dialog">
+  <div class="dialog-head"><div><small>DATA SOURCE</small><h2>Connect OpenD</h2></div><form method="dialog"><button aria-label="Close dialog">×</button></form></div>
+  <p>Start Moomoo OpenD and sign in on this computer. On Windows, extract the companion ZIP, open its folder in File Explorer, type <code>powershell</code> in the address bar, and press Enter. Run these commands one at a time:</p>
+  <pre class="setup-commands"><code>py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe opend_board.py --open-browser --origin https://opend-gex-board.super-fir-5013.chatgpt.site</code></pre>
+  <p>If <code>py</code> is unavailable but <code>python --version</code> works, use <code>python -m venv .venv</code> on the first line. Otherwise, install <a href="https://www.python.org/downloads/windows/" target="_blank" rel="noreferrer">Python for Windows</a> first. Keep OpenD and PowerShell running while viewing the board.</p>
+  <p>Use a full browser tab and allow local network access if prompted. You can also open the local dashboard at <a href="http://127.0.0.1:8766">127.0.0.1:8766</a>.</p>
+  <div class="dialog-actions"><a class="button primary" href="opend-gex-relay.zip" download>Download Windows companion</a><button id="retry" type="button">Connect OpenD</button><button id="demo" type="button">View demo</button></div>
+  <p class="quiet">Read-only quotes. Demo values are synthetic.</p>
+</dialog>
+<dialog id="method-dialog">
+  <div class="dialog-head"><div><small>CALCULATION</small><h2>How to read the board</h2></div><form method="dialog"><button aria-label="Close dialog">×</button></form></div>
+  <p><b>OI-based GEX.</b> For each contract, multiply Gamma × OI × contract multiplier × spot² × 0.01. Calls are signed positive and puts negative under the model assumption. Exposure is in USD per 1% underlying move. OI is a daily clearing figure and does not identify dealer holdings. Heatmap King, Walls and totals cover the selected strike range and expirations. Chart-node strength uses the complete valid strike set for its source, time and expirations before Top N and ≥ King filters are applied together. Strikes is the total number of heatmap rows (20 / 30 / 40 / 50 / 60), balanced around Spot or King.</p>
+  <p><b>Velocity.</b> (|current Net GEX| − |baseline Net GEX|) / |baseline Net GEX| × 100. Green means growing magnitude; red means shrinking. Flipped marks a sign reversal. Quotes, Gamma, IV and time to expiry can change GEX even with unchanged daily OI. Missing/incomplete samples stay blank. Baselines precede the target and match contracts, expiries and model. The 1m / 5m / 15m / 30m baseline is the nearest valid capture at or before the target in the same market phase (at most 90 seconds early). A zero baseline stays blank.</p>
+  <p><b>Trinity.</b> White marks the closest strike; gold marks King (largest absolute Net GEX). King distance is separate from daily change. Call Wall is maximum Call GEX; Put Wall is most negative Put GEX, within sampled strikes.</p>
+  <p><b>Chart.</b> GEX 图 uses TradingView Lightweight Charts to render OpenD OHLC; that library supplies no market data. The separate TradingView mode embeds the official Advanced Chart Widget with FOREXCOM:SPXUSD as a CFD reference. Widget prices do not populate the app's SPX Spot, GEX or Expected Move. Yellow/purple nodes are historical captures. Derived diamonds require paired current prices in the same session. Day Range requires a verified previous-close IV capture and remains fixed. Estimated IV Cone uses current ATM IV and square-root remaining time to the calendar close; Pin freezes its inputs. No synthetic SPX candles or unmeasured accuracy statistics are shown.</p>
+  <p><b>Freshness.</b> Price and options timestamps are separate. Poll frequency is not market-data delay. OpenD does not independently timestamp every Greek or OI field. REF forwards use median matched-strike call/put mids, omitting interest rates; they are not cash SPX. Previous closes require unadjusted daily history matched to the OpenD trading calendar. Missing verified closes display —. Successful captures persist locally for 10 days; periods while the program is closed stay empty. Quotes are not uploaded to the private hosted server.</p>
+  <div class="dialog-actions"><a href="https://www.skylit.ai/docs/guides/heatseeker" target="_blank" rel="noreferrer">Heatseeker guide</a><a href="https://www.skylit.ai/docs/guides/atlas" target="_blank" rel="noreferrer">Atlas guide</a></div>
+</dialog>
+</body>
+</html>

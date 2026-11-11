@@ -1,0 +1,12 @@
+{
+  "name": "opend-gex-board",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "vendor": "node scripts/vendor.mjs",
+    "test": "node --test tests/model.test.mjs tests/app.test.mjs tests/replay.test.mjs tests/expected.test.mjs",
+    "test:browser": "node tests/browser.mjs",
+    "package": "node scripts/package.mjs"
+  },
+  "dependencies": {"lightweight-charts": "5.2.1"}
+}

@@ -1,0 +1,11 @@
+.venv/
+node_modules/
+data/
+dist/
+__pycache__/
+tests/__pycache__/
+tests/live-results.json
+tests/browser-artifacts/
+tests/local-http.log
+tests/local-http-results.json
+web/opend-gex-relay.zip
