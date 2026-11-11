@@ -1,5 +1,5 @@
 import { symbols, pollMs, finite, datesFor, nearest, sum, net, groups, king, velocity, nodeCandidates,
-  baseline, palette, demoFrame, rowVelocity, dayChange, walls, retainHistory, strikeView, viewSettings } from './model.js';
+  baseline, palette, termPalette, demoFrame, rowVelocity, dayChange, walls, retainHistory, strikeView, viewSettings } from './model.js';
 import {PriceChart} from './chart.js';
 import {ChartTools,DarkSelect} from './tools.js';
 import {ReplayClock,frameAt,marketDate,spotLabel,spotPosition,snapshotTrail,etTimestamp} from './replay.js';
@@ -397,16 +397,34 @@ function table(target, headings, rows) {
 function details(view) {
   profile(view);
   if (!view.shown.length) {
+    $('matrix-extremes').replaceChildren();
     empty($('matrix'),'No matching expirations');empty($('oi'),'No matching contracts');
     return;
   }
   const dates = view.frame.dates;
   const map = new Map(view.frame.cells.map(cell => [cell.expiry+'|'+cell.strike,cell]));
-  const max = Math.max(1,...view.frame.cells.map(cell => Math.abs(net(cell) ?? 0)));
+  const visible=view.strikes.flatMap(strike=>dates.map(expiry=>{
+    const value=net(map.get(expiry+'|'+strike));return {key:expiry+'|'+strike,value};
+  })).filter(item=>finite(item.value));
+  const positives=visible.filter(item=>item.value>0).sort((a,b)=>b.value-a.value||a.key.localeCompare(b.key));
+  const negatives=visible.filter(item=>item.value<0).sort((a,b)=>a.value-b.value||a.key.localeCompare(b.key));
+  const top=new Map([...positives.slice(0,3).map((item,i)=>[item.key,{sign:'positive',rank:i+1}]),
+    ...negatives.slice(0,3).map((item,i)=>[item.key,{sign:'negative',rank:i+1}])]);
+  const positiveMax=positives[0]?.value??0,negativeMax=Math.abs(negatives[0]?.value??0);
+  $('matrix-legend').title=`当前可见 ${view.strikes.length} 个 strike × ${dates.length} 个到期日；正负分别按可见峰值缩放。金色最正，紫色最负；边框标出各侧前三。`;
+  const rankLabel=(item,i,sign)=>{
+    const [expiry,strike]=item.key.split('|');
+    const chip=element('span',`${sign}${i+1} ${expiry.slice(5)}/${strike}`,'matrix-rank '+(sign==='+'?'positive':'negative'));
+    chip.title=`${expiry} · Strike ${strike} · Net GEX ${cash(item.value)} · 当前可见矩阵第 ${i+1}`;
+    return chip;
+  };
+  $('matrix-extremes').replaceChildren(...positives.slice(0,3).map((item,i)=>rankLabel(item,i,'+')),
+    ...negatives.slice(0,3).map((item,i)=>rankLabel(item,i,'−')));
   table($('matrix'),['Strike',...dates.map(date=>date.slice(5)+(view.dates.includes(date) ? ' •' : ''))],
     view.strikes.map(strike => [{text:px(strike)},...dates.map(expiry => {
-      const cell = map.get(expiry+'|'+strike), value = cell ? net(cell) : null;
-      return {text:cash(value), style:palette(value,-max,max),title:`${expiry} / ${strike} · Net ${cash(value)} · Call ${cash(cell?.call)} · Put ${cash(cell?.put)}`};
+      const key=expiry+'|'+strike,cell=map.get(key),value=cell ? net(cell) : null,highlight=top.get(key);
+      return {text:cash(value),cls:highlight?`matrix-top-${highlight.sign}`:'',style:termPalette(value,positiveMax,negativeMax),
+        title:`${expiry} / ${strike} · Net ${cash(value)}${highlight?` · ${highlight.sign==='positive'?'最正':'最负'} GEX #${highlight.rank}（当前可见矩阵）`:''} · Call ${cash(cell?.call)} · Put ${cash(cell?.put)}`};
     })]));
   table($('oi'),['Strike','Call OI','Put OI','Call–Put'],view.shown.map(row=>[
     {text:px(row.strike)},{text:count(row.callOi)},{text:count(row.putOi)},{text:count(row.oi),cls:tone(row.oi)}]));

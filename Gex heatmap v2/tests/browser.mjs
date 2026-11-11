@@ -20,6 +20,7 @@ const corner=process.argv.includes('--corner');
 const derivedOnly=process.argv.includes('--derived');
 const cashOnly=process.argv.includes('--spx-cash');
 const exportLive=process.argv.includes('--export-live');
+const matrixOnly=process.argv.includes('--matrix');
 const rangeOnly=process.argv.includes('--range');
 const tvOnly=process.argv.includes('--tv');
 const focusSwitch=process.argv.includes('--focus-switch');
@@ -146,6 +147,15 @@ try{
     assert.equal(replay.mode,'gex');assert.ok(replay.lastCandle<=replay.cursor&&(!replay.lastNode||replay.lastNode<=replay.cursor));
     const report={source:'synthetic SPX cash fixture; no live cash index claim',one,five,refresh,replay,exceptions};
     await writeFile(resolve(artifacts,'spx-cash-fixture.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+  }
+  else if(matrixOnly){
+    await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click();document.querySelector('.detail').scrollIntoView({block:'start'})");
+    await until("document.querySelector('#matrix table tbody tr') && document.querySelector('#matrix').getBoundingClientRect().width>0");
+    await evaluate("document.querySelector('.detail').scrollIntoView({block:'start'})");await wait(250);
+    const info=await evaluate("(()=>{const rows=[...document.querySelectorAll('#matrix tbody tr')],cells=rows.flatMap(r=>[...r.cells].slice(1));return{rows:rows.length,columns:rows[0]?.cells.length,colors:[...new Set(cells.map(c=>getComputedStyle(c).backgroundColor))],positiveTop:cells.filter(c=>c.classList.contains('matrix-top-positive')).length,negativeTop:cells.filter(c=>c.classList.contains('matrix-top-negative')).length,topTitles:cells.filter(c=>c.className.includes('matrix-top')).map(c=>c.title),minText:cells.map(c=>c.textContent).filter(Boolean).slice(0,8),legend:document.querySelector('#matrix-legend')?.textContent??'',summary:document.querySelector('#matrix-extremes')?.textContent??''}})()");
+    const name=process.argv.includes('--before')?'before':'after';const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,`matrix-${name}.png`),Buffer.from(shot.data,'base64'));
+    if(name==='after'){await evaluate("document.querySelector('#matrix').scrollTop=document.querySelector('#matrix').scrollHeight");await wait(150);const lower=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,'matrix-after-negative.png'),Buffer.from(lower.data,'base64'));}
+    await writeFile(resolve(artifacts,`matrix-${name}.json`),JSON.stringify({info,exceptions},null,2));assert.deepEqual(exceptions,[]);if(name==='after'){assert.equal(info.positiveTop,3);assert.equal(info.negativeTop,3);assert.ok(info.colors.includes('rgb(252, 231, 83)')&&info.colors.includes('rgb(135, 56, 209)'));assert.ok(info.summary.includes('+1')&&info.summary.includes('−1'));}console.log(JSON.stringify(info));
   }
   else if(exportLive){
     await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click();document.querySelector('#export-gex-levels').click()");

@@ -177,6 +177,21 @@ export function palette(value, min, max) {
   return { background: p === colors.length - 1 ? '#fce753' : `rgb(${rgb.join(' ')})`, color: level >= .72 ? '#13120b' : '#f3f0ff' };
 }
 
+// Term-structure colors use the displayed strike/expiry cells as their scale.
+// Positive and negative sides have separate denominators so either side remains readable.
+export function termPalette(value,positiveMax,negativeMax){
+  if(!finite(value))return {background:'#161620',color:'#828493'};
+  if(value===0)return {background:'#202126',color:'#a9aab3'};
+  const denominator=value>0?positiveMax:negativeMax;
+  if(!(denominator>0))return {background:'#202126',color:'#a9aab3'};
+  const strength=Math.sqrt(Math.min(1,Math.abs(value)/denominator));
+  const stops=value>0?[[25,47,43],[42,139,124],[119,192,110],[252,231,83]]:
+    [[34,25,45],[76,39,112],[135,56,209]];
+  const scaled=strength*(stops.length-1),index=Math.min(stops.length-2,Math.floor(scaled)),mix=scaled-index;
+  const rgb=stops[index].map((component,i)=>Math.round(component+(stops[index+1][i]-component)*mix));
+  return {background:`rgb(${rgb.join(' ')})`,color:value>0&&strength>.82?'#17170f':'#f5f2fb'};
+}
+
 export function demoFrame(symbol, index) {
   const anchors = {SPXW: 7550, SPY: 753, QQQ: 679};
   const pivot = anchors[symbol], step = symbol === 'SPXW' ? 5 : 1;

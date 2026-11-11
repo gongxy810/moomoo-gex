@@ -17,6 +17,7 @@ The official Lightweight Charts 5.2.1 bundle and its license are in `web/vendor`
 - A valid authorized SPX cash price provider can be connected through `providers.py`; the existing self-drawn chart then uses native SPXW strikes on the SPX price axis.
 - Day Range and Live Cone require valid, time-matched cash prices and option IV. Missing inputs are shown as unavailable. Replay excludes data after its cursor.
 - `Export gex levels` beside Refresh opens a copyable `GEX snapshot` CSV row for the focused symbol. It uses the selected heatmap's Put Wall, Call Wall and King, plus the fixed prior-close Day Range ±1σ prices. If any field or the New York date is missing, copying is disabled so an old range cannot be pasted as today's level.
+- The `GEX by expiration` matrix colors displayed cells by positive and negative GEX separately. Gold and purple outlines mark each side's three largest cells; the labels above the matrix show their expiration and strike. The underlying GEX calculation is unchanged.
 
 The `data/` directory contains local captures and configuration and is intentionally excluded from version control. Browser test profiles, generated screenshots, local logs, virtual environments, and package ZIPs are excluded as well. No market data, credentials, or personal browser state are required to clone this source.
 

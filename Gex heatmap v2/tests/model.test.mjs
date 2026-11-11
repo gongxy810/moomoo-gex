@@ -1,12 +1,19 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {velocity,baseline,rowVelocity,groups,dayChange,aggregateBars,walls,dayRange,expectedMove,retainHistory,net,nearest,strikeView,viewSettings,nodeCandidates} from '../web/model.js';
+import {velocity,baseline,rowVelocity,groups,dayChange,aggregateBars,walls,dayRange,expectedMove,retainHistory,net,nearest,strikeView,viewSettings,nodeCandidates,termPalette} from '../web/model.js';
 import {nodeGeometry} from '../web/chart.js';
 const at='2026-11-09T15:00:00Z';
 const frame=(extra={})=>({symbol:'SPY',optionRoot:'US.SPY',model:'v1',sessionDate:'2026-11-09',collectedAt:at,
   previousSession:'2026-11-06',previousSessionClose:'2026-11-06T21:00:00Z',sessionClose:'2026-11-09T21:00:00Z',
   spot:{value:100,phase:'RTH',current:true,comparable:true,at},...extra});
 const row=value=>({value,complete:true,contracts:['C','P']});
+test('term-structure colors separate positive and negative peaks while dimming weak cells',()=>{
+  assert.equal(termPalette(100,100,100).background,'rgb(252 231 83)');
+  assert.equal(termPalette(-100,100,100).background,'rgb(135 56 209)');
+  assert.notEqual(termPalette(1,100,100).background,termPalette(100,100,100).background);
+  assert.notEqual(termPalette(-1,100,100).background,termPalette(-100,100,100).background);
+  assert.equal(termPalette(null,100,100).background,'#161620');
+});
 test('absolute-magnitude velocity, shrink, expansion, flip and real zeros',()=>{
   assert.equal(velocity(-150,-100),50);assert.equal(velocity(75,100),-25);
   assert.equal(rowVelocity(row(150),row(-100),['x'],['x']).flipped,true);
