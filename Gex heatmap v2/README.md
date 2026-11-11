@@ -16,6 +16,7 @@ The official Lightweight Charts 5.2.1 bundle and its license are in `web/vendor`
 - This OpenD account currently returns `暂不支持美股指数` for SPX cash snapshots and 1-minute bars. In Live mode, SPXW therefore opens the official TradingView `FOREXCOM:SPXUSD` CFD reference widget by default. The SPXW GEX price levels remain listed separately, without unverified CFD mapping. SPY and other symbols with supported prices use the self-drawn GEX chart.
 - A valid authorized SPX cash price provider can be connected through `providers.py`; the existing self-drawn chart then uses native SPXW strikes on the SPX price axis.
 - Day Range and Live Cone require valid, time-matched cash prices and option IV. Missing inputs are shown as unavailable. Replay excludes data after its cursor.
+- `Export gex levels` beside Refresh opens a copyable `GEX snapshot` CSV row for the focused symbol. It uses the selected heatmap's Put Wall, Call Wall and King, plus the fixed prior-close Day Range ±1σ prices. If any field or the New York date is missing, copying is disabled so an old range cannot be pasted as today's level.
 
 The `data/` directory contains local captures and configuration and is intentionally excluded from version control. Browser test profiles, generated screenshots, local logs, virtual environments, and package ZIPs are excluded as well. No market data, credentials, or personal browser state are required to clone this source.
 

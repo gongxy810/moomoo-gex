@@ -130,7 +130,7 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                     category='TIMEOUT' if isinstance(error,TimeoutError) or 'timeout' in message.lower() else 'INVALID_CODE' if any(x in message.lower() for x in ['未知股票','unknown stock','unknown security','invalid stock']) else 'PERMISSION' if any(x in message.lower() for x in ['权限','permission','entitlement']) else 'NO_OPTIONS' if '期权链' in message else 'UNAVAILABLE'
                     print(json.dumps({'event':'request-error','path':path.path,'symbol':symbol,'error':message,'seconds':round(monotonic()-started,3)},ensure_ascii=True),flush=True)
                     return self.json_response({'error':message,'category':category}, 504 if category=='TIMEOUT' else 400 if category=='INVALID_CODE' else 502)
-            assets = {'/', '/index.html', '/app.js', '/model.js', '/chart.js', '/replay.js', '/tools.js','/expected.js','/style.css',
+            assets = {'/', '/index.html', '/app.js', '/model.js', '/chart.js', '/replay.js', '/tools.js','/expected.js','/gex-export.js','/style.css',
                       '/vendor/lightweight-charts.standalone.production.js', '/vendor/NOTICE', '/vendor/LICENSE',
                       '/opend-gex-relay.zip'}
             if path.path == '/favicon.ico':

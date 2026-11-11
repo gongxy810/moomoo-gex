@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
-    "test": "node --test tests/model.test.mjs tests/app.test.mjs tests/replay.test.mjs tests/expected.test.mjs",
+    "test": "node --test tests/model.test.mjs tests/app.test.mjs tests/replay.test.mjs tests/expected.test.mjs tests/export.test.mjs",
     "test:browser": "node tests/browser.mjs",
     "package": "node scripts/package.mjs"
   },

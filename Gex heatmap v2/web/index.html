@@ -25,6 +25,7 @@
   <button id="center" type="button" title="Toggle centering on Spot or King">Spot</button>
   <label class="speed">ϟ GEX Velocity <select id="speed" aria-label="GEX velocity lookback"><option value="1">1m</option><option value="5" selected>5m</option><option value="15">15m</option><option value="30">30m</option></select></label>
   <div class="spacer"></div>
+  <button id="export-gex-levels" type="button">Export gex levels</button>
   <button id="refresh" type="button">Refresh</button>
   <button id="method" type="button">Method</button>
 </section>
@@ -75,9 +76,17 @@
   <p><b>OI-based GEX.</b> For each contract, multiply Gamma × OI × contract multiplier × spot² × 0.01. Calls are signed positive and puts negative under the model assumption. Exposure is in USD per 1% underlying move. OI is a daily clearing figure and does not identify dealer holdings. Heatmap King, Walls and totals cover the selected strike range and expirations. Chart-node strength uses the complete valid strike set for its source, time and expirations before Top N and ≥ King filters are applied together. Strikes is the total number of heatmap rows (20 / 30 / 40 / 50 / 60), balanced around Spot or King.</p>
   <p><b>Velocity.</b> (|current Net GEX| − |baseline Net GEX|) / |baseline Net GEX| × 100. Green means growing magnitude; red means shrinking. Flipped marks a sign reversal. Quotes, Gamma, IV and time to expiry can change GEX even with unchanged daily OI. Missing/incomplete samples stay blank. Baselines precede the target and match contracts, expiries and model. The 1m / 5m / 15m / 30m baseline is the nearest valid capture at or before the target in the same market phase (at most 90 seconds early). A zero baseline stays blank.</p>
   <p><b>Trinity.</b> White marks the closest strike; gold marks King (largest absolute Net GEX). King distance is separate from daily change. Call Wall is maximum Call GEX; Put Wall is most negative Put GEX, within sampled strikes.</p>
+  <p><b>Export gex levels.</b> Copies one CSV row for the focused symbol and New York date: symbol, date, Put Wall, Call Wall, fixed Day Expected Move low/high, King. Walls and King use the selected expiration and strike window. Day bounds use the verified prior-close ±1σ range, even if its chart layer is hidden; the moving Live Cone is excluded. A missing or mismatched field disables copying.</p>
   <p><b>Chart.</b> GEX 图 uses TradingView Lightweight Charts to render OpenD OHLC; that library supplies no market data. The separate TradingView mode embeds the official Advanced Chart Widget with FOREXCOM:SPXUSD as a CFD reference. Widget prices do not populate the app's SPX Spot, GEX or Expected Move. Yellow/purple nodes are historical captures. Derived diamonds require paired current prices in the same session. Day Range requires a verified previous-close IV capture and remains fixed. Estimated IV Cone uses current ATM IV and square-root remaining time to the calendar close; Pin freezes its inputs. No synthetic SPX candles or unmeasured accuracy statistics are shown.</p>
   <p><b>Freshness.</b> Price and options timestamps are separate. Poll frequency is not market-data delay. OpenD does not independently timestamp every Greek or OI field. REF forwards use median matched-strike call/put mids, omitting interest rates; they are not cash SPX. Previous closes require unadjusted daily history matched to the OpenD trading calendar. Missing verified closes display —. Successful captures persist locally for 10 days; periods while the program is closed stay empty. Quotes are not uploaded to the private hosted server.</p>
   <div class="dialog-actions"><a href="https://www.skylit.ai/docs/guides/heatseeker" target="_blank" rel="noreferrer">Heatseeker guide</a><a href="https://www.skylit.ai/docs/guides/atlas" target="_blank" rel="noreferrer">Atlas guide</a></div>
+</dialog>
+<dialog id="gex-export-dialog">
+  <div class="dialog-head"><div><small>TRADINGVIEW INDICATOR INPUT</small><h2>GEX snapshot</h2></div><form method="dialog"><button aria-label="Close dialog">×</button></form></div>
+  <p class="quiet">标的,纽约日期,Put Wall,Call Wall,Expected Move 下沿,Expected Move 上沿,King Node</p>
+  <textarea id="gex-snapshot" rows="2" readonly aria-label="GEX snapshot CSV row"></textarea>
+  <p id="gex-export-status" role="status"></p>
+  <div class="dialog-actions"><button id="copy-gex-snapshot" type="button" class="primary" disabled>Copy GEX snapshot</button></div>
 </dialog>
 </body>
 </html>

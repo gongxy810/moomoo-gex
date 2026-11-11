@@ -83,6 +83,9 @@ dialog::backdrop {background:#000b}
 .dialog-head {justify-content:space-between}
 .dialog-head h2 {font-size:20px}
 .dialog-actions {flex-wrap:wrap}
+.dialog-actions button {white-space:nowrap}
+#gex-snapshot {box-sizing:border-box;width:100%;min-height:66px;resize:vertical;padding:10px 12px;color:var(--text);background:#101014;border:1px solid var(--line);border-radius:6px;font:13px/1.5 var(--mono)}
+#gex-export-status {font:11px/1.5 var(--mono);color:var(--quiet)}
 .primary {background:#312611!important;border-color:#776035!important;color:#f7e2a2!important}
 @media(max-width:1100px) {.strike-row {grid-template-columns:36px minmax(0,1fr);font-size:10px}.velocity {font-size:8px}.ladder-top,.king-row {padding:0 5px}}
 @media(max-width:920px) {.terminal {grid-template-columns:1fr}.plot {min-height:380px}.ladder-body {height:480px}.detail {grid-template-columns:1fr 1fr}.detail .wide {order:3;grid-column:1/-1}}

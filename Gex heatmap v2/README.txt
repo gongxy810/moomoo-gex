@@ -41,6 +41,7 @@ https://opend-gex-board.super-fir-5013.chatgpt.site
   铅笔可画横线/两点趋势线和删除选中线；手柄可拖动，方向键也可移动。
   剪贴板权限失败时提供下载。Live / Replay 导出都遵守当前显示的截断。
 - TVC:SPX 链接仅在 TradingView 独立打开；本地图表不读其内部行情。
+- 顶部 Export gex levels 按当前聚焦标的、纽约日期导出一行 GEX snapshot：标的,日期,Put Wall,Call Wall,固定 Day Range 下沿,上沿,King。缺失或日期不匹配时禁止复制，不用 Live Cone 冒充固定日区间。
 - GEX 30 秒后重采；价格 15 秒后独立刷新，OpenD 限流/采集耗时会延长实际间隔。
   行情时间、采集时间、轮询间隔分别显示，不能把轮询间隔当成报价延迟。
 - 只读行情，不下单，不读取 TradingView 账户/Cookie，不购买行情套餐。
