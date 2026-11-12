@@ -48,9 +48,8 @@ var array<float> nodeKings = array.new<float>()
 var array<int> nodeCaptureTimes = array.new<int>()
 var array<string> nodeSources = array.new<string>()
 var array<string> nodeShapes = array.new<string>()
-var array<line> drawnLines = array.new<line>()
 var array<label> drawnLabels = array.new<label>()
-var table summary = table.new(position.top_left, 2, 7, bgcolor = panel, border_width = 1, border_color = #35323D)
+var table summary = table.new(position.bottom_right, 2, 8, bgcolor = panel, border_width = 1, border_color = #35323D, force_overlay = true)
 
 if barstate.isfirst
     array<string> records = str.split(snapshot, "\n")
@@ -136,6 +135,15 @@ if barstate.isfirst
 bool symbolMatches = parsed and (sourceSymbol == "SPXW" ? (syminfo.tickerid == "TVC:SPX" or syminfo.tickerid == "CBOE:SPX") : syminfo.ticker == sourceSymbol)
 bool dateMatches = parsed and str.format_time(time, "yyyyMMdd", "America/New_York") == sourceDate
 bool matchBar = symbolMatches and dateMatches
+bool sameWallPrice = not na(putWall) and putWall == callWall
+plot(matchBar ? putWall : na, "Put Wall / C-P Wall", color = sameWallPrice ? bothWall : putPink, linewidth = 1, style = plot.style_linebr, linestyle = plot.linestyle_dashed, force_overlay = true)
+plot(matchBar and not sameWallPrice ? callWall : na, "Call Wall", color = callCyan, linewidth = 1, style = plot.style_linebr, linestyle = plot.linestyle_dashed, force_overlay = true)
+plot(matchBar and showRange ? low1 : na, "Hist Day -1σ", color = rangeBlue, linewidth = 1, style = plot.style_linebr, linestyle = plot.linestyle_dotted, force_overlay = true)
+plot(matchBar and showRange ? high1 : na, "Hist Day +1σ", color = rangeBlue, linewidth = 1, style = plot.style_linebr, linestyle = plot.linestyle_dotted, force_overlay = true)
+plot(matchBar and showRange and showTwoSigma ? low2 : na, "Hist Day -2σ", color = rangeBlue, linewidth = 1, style = plot.style_linebr, linestyle = plot.linestyle_dotted, force_overlay = true)
+plot(matchBar and showRange and showTwoSigma ? high2 : na, "Hist Day +2σ", color = rangeBlue, linewidth = 1, style = plot.style_linebr, linestyle = plot.linestyle_dotted, force_overlay = true)
+plot(matchBar ? referencePrice : na, "Spot / REF at capture", color = quiet, linewidth = 1, style = plot.style_linebr, linestyle = plot.linestyle_dotted, force_overlay = true)
+plot(matchBar ? kingPrice : na, "King", color = kingGold, linewidth = 2, style = plot.style_linebr, force_overlay = true)
 var int firstMatchTime = na
 var int lastMatchTime = na
 if matchBar
@@ -143,12 +151,9 @@ if matchBar
         firstMatchTime := time
     lastMatchTime := time
 
-if barstate.islast
+if barstate.islast or barstate.islastconfirmedhistory
     int drawnNodeCount = 0
     int visibleNodeCount = 0
-    for oldLine in drawnLines
-        line.delete(oldLine)
-    array.clear(drawnLines)
     for oldLabel in drawnLabels
         label.delete(oldLabel)
     array.clear(drawnLabels)
@@ -177,10 +182,7 @@ if barstate.islast
                                 caption += " / " + array.get(names, j)
                                 includesKing := includesKing or j == 2
                     color tone = includesKing ? kingGold : array.get(tones, i)
-                    bool dayLine = i >= 3 and i <= 6
-                    line ln = line.new(firstMatchTime, levelPrice, rightTime, levelPrice, xloc = xloc.bar_time, extend = extend.none, color = color.new(tone, dayLine ? 20 : 8), style = dayLine ? line.style_dotted : includesKing ? line.style_solid : line.style_dashed, width = includesKing ? 2 : 1)
-                    array.push(drawnLines, ln)
-                    label tag = label.new(tagTime, levelPrice, caption + "  " + str.tostring(levelPrice, format.mintick), xloc = xloc.bar_time, yloc = yloc.price, color = color.new(tone, 8), style = label.style_label_left, textcolor = #0B0B0D, size = size.tiny, tooltip = "OpenD GEX snapshot " + capturedAt + "\nExpiry: " + expiries)
+                    label tag = label.new(tagTime, levelPrice, caption + "  " + str.tostring(levelPrice, format.mintick), xloc = xloc.bar_time, yloc = yloc.price, color = color.new(tone, 8), style = label.style_label_left, textcolor = #0B0B0D, size = size.tiny, tooltip = "OpenD GEX snapshot " + capturedAt + "\nExpiry: " + expiries, force_overlay = true)
                     array.push(drawnLabels, tag)
         if showBubbles and array.size(nodeStrikes) > 0
             for i = 0 to array.size(nodeStrikes) - 1
@@ -203,7 +205,7 @@ if barstate.islast
                         bool derived = array.get(nodeShapes, i) == "D"
                         int capturedNode = array.get(nodeCaptureTimes, i)
                         string details = (derived ? "Derived " : "Native ") + array.get(nodeSources, i) + " GEX\nStrike " + str.tostring(strike, format.mintick) + "\nMapped price " + str.tostring(mapped, format.mintick) + "\nGEX " + str.tostring(value, "#.####") + "\nKing GEX " + str.tostring(array.get(nodeKings, i), "#.####") + "\n" + str.tostring(percent, "#.##") + "% King\nCaptured " + (capturedNode == 0 ? capturedAt : str.format_time(capturedNode, "yyyy-MM-dd HH:mm:ss", "America/New_York")) + " ET\nExpiry " + expiries
-                        label bubble = label.new(nodeTime, mapped, "", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(nodeTone, fade), style = derived ? label.style_diamond : label.style_circle, textcolor = nodeTone, size = percent >= 70 ? size.small : size.tiny, tooltip = details)
+                        label bubble = label.new(nodeTime, mapped, "", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(nodeTone, fade), style = derived ? label.style_diamond : label.style_circle, textcolor = nodeTone, size = percent >= 70 ? size.small : size.tiny, tooltip = details, force_overlay = true)
                         array.push(drawnLabels, bubble)
                         drawnNodeCount += 1
 
@@ -224,6 +226,8 @@ if barstate.islast
         table.cell(summary, 1, 5, referenceKind + " " + str.tostring(referencePrice, format.mintick), text_color = quiet, text_size = size.tiny)
         table.cell(summary, 0, 6, "Day range", text_color = quiet, text_size = size.tiny)
         table.cell(summary, 1, 6, na(low1) or na(high1) ? "Unavailable" : str.tostring(low1, format.mintick) + "–" + str.tostring(high1, format.mintick), text_color = rangeBlue, text_size = size.tiny)
+        table.cell(summary, 0, 7, "Chart / NY date", text_color = quiet, text_size = size.tiny)
+        table.cell(summary, 1, 7, syminfo.tickerid + " · " + str.format_time(time, "yyyyMMdd", "America/New_York") + " · " + timeframe.period, text_color = #DFDCE2, text_size = size.tiny)
     else
-        table.clear(summary, 0, 0, 1, 6)
+        table.clear(summary, 0, 0, 1, 7)
 
