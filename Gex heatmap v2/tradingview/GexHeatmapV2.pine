@@ -38,7 +38,7 @@ var array<float> nodeGex = array.new<float>()
 var array<float> nodePercent = array.new<float>()
 var array<line> drawnLines = array.new<line>()
 var array<label> drawnLabels = array.new<label>()
-var table summary = table.new(position.top_right, 2, 7, bgcolor = panel, border_width = 1, border_color = #35323D)
+var table summary = table.new(position.top_left, 2, 7, bgcolor = panel, border_width = 1, border_color = #35323D)
 
 if barstate.isfirst
     array<string> records = str.split(snapshot, "\n")
@@ -98,10 +98,11 @@ if barstate.islast
             if not na(levelPrice) and levelPrice > 0
                 color tone = array.get(tones, i)
                 bool dashed = i != 2
-                line ln = line.new(firstMatchBar, levelPrice, bar_index + 7, levelPrice, xloc = xloc.bar_index, extend = extend.none, color = color.new(tone, i >= 3 ? 35 : 8), style = dashed ? line.style_dashed : line.style_solid, width = i == 2 ? 2 : 1)
+                int tagX = bar_index + 7 + (i == 2 ? 7 : i >= 3 ? 14 : 0)
+                line ln = line.new(firstMatchBar, levelPrice, tagX, levelPrice, xloc = xloc.bar_index, extend = extend.none, color = color.new(tone, i >= 3 ? 35 : 8), style = dashed ? line.style_dashed : line.style_solid, width = i == 2 ? 2 : 1)
                 array.push(drawnLines, ln)
                 string caption = array.get(names, i) + "  " + str.tostring(levelPrice, format.mintick)
-                label tag = label.new(bar_index + 7, levelPrice, caption, xloc = xloc.bar_index, yloc = yloc.price, color = color.new(tone, 15), style = label.style_label_left, textcolor = #0B0B0D, size = size.tiny, tooltip = "OpenD GEX snapshot " + capturedAt + "\nExpiry: " + expiries)
+                label tag = label.new(tagX, levelPrice, caption, xloc = xloc.bar_index, yloc = yloc.price, color = color.new(tone, 15), style = label.style_label_left, textcolor = #0B0B0D, size = size.tiny, tooltip = "OpenD GEX snapshot " + capturedAt + "\nExpiry: " + expiries)
                 array.push(drawnLabels, tag)
         if showBubbles and array.size(nodeStrikes) > 0
             for i = 0 to array.size(nodeStrikes) - 1
