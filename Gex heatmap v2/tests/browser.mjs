@@ -159,9 +159,10 @@ try{
   }
   else if(exportLive){
     await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click();document.querySelector('#export-gex-levels').click()");
-    const result=await evaluate("(()=>({open:document.querySelector('#gex-export-dialog').open,row:document.querySelector('#gex-snapshot').value,status:document.querySelector('#gex-export-status').textContent,copyEnabled:!document.querySelector('#copy-gex-snapshot').disabled,buttonLeft:document.querySelector('#export-gex-levels').getBoundingClientRect().left,refreshLeft:document.querySelector('#refresh').getBoundingClientRect().left}))()");
+    const result=await evaluate("(()=>({open:document.querySelector('#gex-export-dialog').open,row:document.querySelector('#gex-snapshot').value,pine:document.querySelector('#gex-pine-snapshot').value,pineCopyEnabled:!document.querySelector('#copy-gex-pine-snapshot').disabled,status:document.querySelector('#gex-export-status').textContent,copyEnabled:!document.querySelector('#copy-gex-snapshot').disabled,buttonLeft:document.querySelector('#export-gex-levels').getBoundingClientRect().left,refreshLeft:document.querySelector('#refresh').getBoundingClientRect().left}))()");
     assert.ok(result.open&&result.buttonLeft<result.refreshLeft&&result.row.startsWith('SPY,'));
     assert.ok(result.copyEnabled?result.row.split(',').length===7:result.status.includes('不能生成完整记录'));
+    assert.ok(result.pineCopyEnabled&&result.pine.startsWith('GEX2|SPY|20261109|')&&result.pine.includes('\nL|'));
     const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,'gex-export-live.png'),Buffer.from(shot.data,'base64'));
     await writeFile(resolve(artifacts,'gex-export-live.json'),JSON.stringify({result,exceptions},null,2));assert.deepEqual(exceptions,[]);console.log(JSON.stringify(result));
   }
@@ -357,3 +358,4 @@ try{
 }finally{
   socket?.close();browser.kill();await new Promise(r=>server.close(r));
 }
+
