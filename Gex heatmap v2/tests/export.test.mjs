@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {gexSnapshot,pineSnapshot} from '../web/gex-export.js';
+import {gexSnapshot,pineSnapshot,pineHistorySnapshot} from '../web/gex-export.js';
 
 const at=Date.parse('2026-11-11T15:00:00Z');
 const base={symbol:'SPY',date:'2026-11-11',frameDate:'2026-11-11',putWall:750,callWall:770,king:760,at};
@@ -41,5 +41,31 @@ test('Pine export keeps valid GEX when fixed range is missing, but rejects old c
   assert.match(value,/^GEX2\|SPY\|20261111\|750\|770\|na\|na\|750\|/);
   assert.equal(pineSnapshot({...base,frame:{...frame,sessionDate:'2026-11-10'},dates:['2026-11-11'],rows,range}),null);
   assert.equal(pineSnapshot({...base,frame:{...frame,captureAt:'2026-11-11T15:01:00Z'},dates:['2026-11-11'],rows,range}),null);
+});
+test('GEX3 exports historical time and price nodes with four fixed range levels',()=>{
+  const node={time:Math.trunc(Date.parse('2026-11-11T14:55:00Z')/1000),price:755,strike:755,
+    value:-50,king:-100,at:'2026-11-11T14:55:20Z',source:'SPY',derived:false};
+  const result=pineHistorySnapshot({...base,frame,dates:['2026-11-11'],rows,nodes:[node],range:{...range,impliedLow2:736,impliedHigh2:784},
+    referenceKind:'REF',historical:true});
+  const parts=result.text.split('\n');
+  assert.equal(result.exportedCount,1);
+  assert.equal(parts[0].split('|').length,21);
+  assert.match(parts[0],/^GEX3\|SPY\|20261111\|750\|770\|748\|772\|736\|784\|760\|/);
+  assert.equal(parts[1],`N|${node.time}|755|755|-50|-100|${Math.trunc(Date.parse(node.at)/1000)}|SPY|N`);
+  assert.ok(parts[0].endsWith('|Historical|-45|90|-135'));
+});
+test('GEX3 keeps all 500 historical nodes, excludes future ones, and reports input truncation',()=>{
+  const time=Math.trunc(Date.parse('2026-11-11T14:55:00Z')/1000);
+  const nodes=Array.from({length:500},(_,i)=>({time,price:700+i*.01,strike:700+i*.01,value:i+1,
+    king:500,at:'2026-11-11T14:55:20Z',source:'SPY',derived:false}));
+  nodes.push({...nodes[0],time:time+600,at:'2026-11-11T15:05:00Z'});
+  const result=pineHistorySnapshot({...base,frame,dates:['2026-11-11'],rows,nodes,range:null});
+  assert.equal(result.totalCount,500);
+  assert.equal(result.exportedCount,500);
+  assert.equal(result.omittedCount,0);
+  assert.ok(result.text.length<38000);
+  assert.match(result.text,/\|na\|na\|na\|na\|760\|/);
+  const tooMany=pineHistorySnapshot({...base,frame,dates:['2026-11-11'],rows,nodes:[...nodes,...nodes],range:null});
+  assert.ok(tooMany.omittedCount>0&&tooMany.text.length<=38000);
 });
 

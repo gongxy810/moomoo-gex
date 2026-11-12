@@ -89,7 +89,7 @@
   <p id="gex-export-status" role="status"></p>
   <div class="dialog-actions"><button id="copy-gex-snapshot" type="button" class="primary" disabled>Copy GEX snapshot</button></div>
   <h3>Gex heatmap v2 · TradingView indicator</h3>
-  <p class="quiet">Copy this GEX2 block into the indicator's Snapshot input. Levels follow the current expiry, strike range, Top N and % King controls. Missing fixed Day Range is sent as na.</p>
+  <p class="quiet">Copy this GEX3 block into the indicator's Snapshot input. It includes the chart's historical GEX bubbles, current King and Walls, and verified Hist Day ±1σ / ±2σ lines. The indicator draws up to 480 nodes in the visible window; the dialog reports any history omitted by the input-length limit. Missing fixed Day Range is sent as na.</p>
   <textarea id="gex-pine-snapshot" rows="8" readonly aria-label="GEX2 TradingView indicator data"></textarea>
   <div class="dialog-actions"><button id="copy-gex-pine-snapshot" type="button" class="primary" disabled>Copy for TradingView indicator</button></div>
 </dialog>

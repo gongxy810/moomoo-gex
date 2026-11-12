@@ -4,7 +4,7 @@ import {PriceChart} from './chart.js';
 import {ChartTools,DarkSelect} from './tools.js';
 import {ReplayClock,frameAt,marketDate,spotLabel,spotPosition,snapshotTrail,etTimestamp} from './replay.js';
 import {openDExpected,fixedDayRange,outsideDayRange,coneHeld,pinScore,tempestExpected,tempestDayRange,tempestRunningSigma} from './expected.js';
-import {gexSnapshot,pineSnapshot} from './gex-export.js';
+import {gexSnapshot,pineHistorySnapshot} from './gex-export.js';
 
 const $ = id => document.getElementById(id);
 const state = {symbol:'SPXW', source:'opend', expiry:'0dte', limit:40, frames:[], index:null,
@@ -635,18 +635,21 @@ function openGexExport(){
     fixedDayRange(frame,history,at,state.source==='opend'?state.fixedRanges:[]);
   const result=gexSnapshot({symbol,date,frameDate:frame?.sessionDate,putWall:wall.put?.strike,
     callWall:wall.call?.strike,king:view.peak?.strike,range,at});
-  const pine=state.source==='opend'?pineSnapshot({symbol,date,frame,dates:view.dates,rows:view.shown,
+  let cachedNodes=[];
+  try{if(JSON.parse(state.nodeCache?.key??'[]')[0]===symbol&&
+      JSON.stringify(JSON.parse(state.nodeCache.key)[1])===JSON.stringify(view.dates))cachedNodes=state.nodeCache.nodes;}catch{}
+  const pine=state.source==='opend'?pineHistorySnapshot({symbol,date,frame,dates:view.dates,rows:view.shown,nodes:cachedNodes,
     putWall:wall.put?.strike,callWall:wall.call?.strike,king:view.peak?.strike,range,at,
-    top:state.top,threshold:state.threshold,referenceKind:spotLabel(symbol,frame?.spot)}):null;
+    referenceKind:spotLabel(symbol,frame?.spot),minutes:state.candleMinutes,historical:state.replayCursor!==null}):null;
   const valid=state.source==='opend'&&!!result.line;
   $('gex-snapshot').value=result.preview;
-  $('gex-pine-snapshot').value=pine??'';
+  $('gex-pine-snapshot').value=pine?.text??'';
   $('copy-gex-snapshot').disabled=!valid;
-  $('copy-gex-pine-snapshot').disabled=!pine;
+  $('copy-gex-pine-snapshot').disabled=!pine?.text;
   $('gex-export-status').textContent=state.source!=='opend'?'Demo 是合成数据，不能导出到真实 TradingView 指标。':
     valid?`可复制 · ${symbol} · 到期 ${view.dates.join(', ')||'—'} · GEX ${frame?.captureAt??frame?.collectedAt??'—'} · 固定 Day Range ${range.provider} ${range.asOf??'—'}。Expected Move 为绝对价格，非 Live Cone。`:
     `不能生成完整记录：${result.missing.join('、')}。缺失值显示为 —，请勿把预览粘贴到指标。`;
-  if(pine&&!valid)$('gex-export-status').textContent+=' 下方 GEX2 仍可复制；缺少的固定 Day Range 以 na 表示。';
+  if(pine)$('gex-export-status').textContent+=` GEX3 历史节点 ${pine.exportedCount}/${pine.totalCount}${pine.omittedCount?`；Pine 上限省略较早的 ${pine.omittedCount} 个`:''}；固定 Day Range ${pine.rangeAvailable?'已包含 ±1σ / 可用的 ±2σ':'缺失，以 na 表示'}。${state.historyPending[symbol]?' 历史仍在加载，请稍后重新打开导出。':''}`;
   $('gex-export-dialog').showModal();
 }
 $('export-gex-levels').onclick=openGexExport;
@@ -659,8 +662,8 @@ $('copy-gex-snapshot').onclick=async()=>{
 $('copy-gex-pine-snapshot').onclick=async()=>{
   const payload=$('gex-pine-snapshot').value;
   if(!payload||$('copy-gex-pine-snapshot').disabled)return;
-  try{await navigator.clipboard.writeText(payload);$('gex-export-status').textContent='已复制 GEX2 数据；粘贴到 Gex heatmap v2 指标的 Snapshot input。';}
-  catch{$('gex-pine-snapshot').focus();$('gex-pine-snapshot').select();$('gex-export-status').textContent='已选中 GEX2 数据，请按 Ctrl+C 复制。';}
+  try{await navigator.clipboard.writeText(payload);$('gex-export-status').textContent='已复制 GEX3 历史快照；粘贴到 Gex heatmap v2 指标的 Snapshot input。';}
+  catch{$('gex-pine-snapshot').focus();$('gex-pine-snapshot').select();$('gex-export-status').textContent='已选中 GEX3 历史快照，请按 Ctrl+C 复制。';}
 };
 $('demo').onclick=()=>source('demo');
 $('retry').onclick=()=>source('opend');
