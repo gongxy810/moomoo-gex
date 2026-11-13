@@ -58,20 +58,22 @@ test('node marks obey spacing/strike bounds, merge collisions without losing sou
   const n=(source,weight,price=100,derived=false)=>({source,root:source,time:1,price,weight,value:-100,derived,title:source});
   const marks=nodeGeometry([n('SPY',1),n('SPXW',.5),n('SPY',.1,110),n('SPY',.8,120,true)],t=>t*10,p=>p,6,scale);
   assert.equal(marks.length,3);assert.equal(marks[0].others[0].source,'SPXW');
-  assert.ok(marks.every(m=>m.w<=6*.72&&m.alpha<=.6));
+  assert.ok(marks.every(m=>m.w<=6*.72&&m.alpha<=.99));
   assert.ok(marks.find(m=>m.derived).h>marks.find(m=>m.derived).w);
   assert.ok(nodeGeometry([n('X',1)],t=>t,p=>p,2,scale)[0].w<=1.44);
 });
-test('board node opacity rises by twenty points without changing node geometry',()=>{
+test('board nodes gain thirty opacity points over the prior rendering, capped at 99%',()=>{
   const node={time:1,price:100,strike:100,source:'SPY',weight:.5,value:50,king:100};
   const geometry=scale=>nodeGeometry([node],t=>t*10,p=>p,16,scale)[0];
   const before=geometry({min:2,max:8,alphaMin:.10,alphaMax:.65});
   const after=geometry({min:2,max:8,alphaMin:.30,alphaMax:.85});
-  assert.ok(Math.abs(after.alpha-before.alpha-.20)<1e-10);
+  const prior=.30+.55*Math.pow(.5,.75);
+  assert.ok(Math.abs(after.alpha-Math.min(.99,prior+.30))<1e-10);
   assert.equal(after.w,before.w);assert.equal(after.h,before.h);
-  const oldZoomAlpha=(.10+(.65-.10)*Math.pow(.5,.75));
   const far=nodeGeometry([node],t=>t*10,p=>p,2,{min:2,max:8,alphaMin:.30,alphaMax:.85})[0];
-  assert.ok(Math.abs(far.alpha-oldZoomAlpha*.5-.20)<1e-10);
+  assert.ok(Math.abs(far.alpha-Math.min(.99,prior*.5+.20*.5+.30))<1e-10);
+  const king=nodeGeometry([{...node,weight:1}],t=>t*10,p=>p,16,{min:2,max:8,alphaMin:.30,alphaMax:.85})[0];
+  assert.equal(king.alpha,.99);
 });
 test('node strength uses the complete source strike set and preserves shape through sign flips',()=>{
   const cells=[{expiry:'d',strike:100,call:20,put:0},{expiry:'d',strike:101,call:80,put:0},

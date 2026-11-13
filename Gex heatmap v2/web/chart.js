@@ -6,7 +6,7 @@ const et=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'2-di
 export const NODE_STYLE={
   ellipse:{minWidth:2.4,maxWidth:8,minHeight:2.3,maxHeight:7},
   diamond:{minWidth:2,maxWidth:6.5,minHeight:3,maxHeight:22},
-  alphaMin:.30,alphaRange:.55,alphaPower:.75,kingAlpha:.92,maxSpacingRatio:.72,
+  alphaMin:.30,alphaRange:.55,alphaPower:.75,kingAlpha:.92,opacityBoost:.30,maxSpacingRatio:.72,
   positive:'#E9BA48',negative:'#8738D1'
 };
 
@@ -26,8 +26,8 @@ export function nodeGeometry(nodes,x,y,spacing,scale){
     const alphaMax=finite(scale.alphaMax)?scale.alphaMax:NODE_STYLE.alphaMin+NODE_STYLE.alphaRange;
     const spacingFactor=Math.min(1,Math.max(.35,spacing/4));
     const baseAlpha=s>=.999?Math.min(.95,alphaMax+.07):alphaMin+(alphaMax-alphaMin)*power;
-    // Preserve the +20 percentage-point lift even when distant zoom dims nodes.
-    const alpha=Math.min(.95,baseAlpha*spacingFactor+.20*(1-spacingFactor));
+    // Keep the previous zoom-adjusted opacity, then add 30 percentage points.
+    const alpha=Math.min(.99,baseAlpha*spacingFactor+.20*(1-spacingFactor)+NODE_STYLE.opacityBoost);
     const color=n.value>=0?NODE_STYLE.positive:NODE_STYLE.negative;
     const gx=Math.floor(n.x/8),gy=Math.floor(n.y/8);let hit;
     for(let dx=-1;dx<=1&&!hit;dx++)for(let dy=-1;dy<=1&&!hit;dy++)
