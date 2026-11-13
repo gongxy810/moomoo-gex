@@ -214,6 +214,12 @@ export class PriceChart {
     const key=symbol+'|'+minutes;
     this.levels=levels;
     const changed=key!==this.key;this.key=key;
+    // A manually positioned price scale belongs to its symbol. Carrying a
+    // TSLA/SPX range into SPY pushes every candle and level off the canvas.
+    if(this.context&&this.context.symbol!==symbol){
+      autoScale=true;this.chart.priceScale('right').applyOptions({autoScale:true});
+      this.autoScale=true;this.onAutoScale?.();
+    }
     if(this.context&&(this.context.symbol!==symbol||this.context.replay!==replay||(replay&&at<this.context.at)))this.setDrawingMode(null);
     this.context={symbol,minutes,at,replay};this.drawingsVisible=drawingsVisible;
     if(autoScale!==this.autoScale){this.chart.priceScale('right').applyOptions({autoScale});this.autoScale=autoScale;}
@@ -265,6 +271,8 @@ export class PriceChart {
       this.defaultRange();
     }
     this.onControlsLayout?.();
+    cancelAnimationFrame(this.visibilityCheck);
+    this.visibilityCheck=requestAnimationFrame(()=>this.ensureVisiblePrices(autoScale));
     this.target.dataset.chartUpdateMs=(performance.now()-renderStarted).toFixed(1);
     return true;
   }
@@ -276,7 +284,26 @@ export class PriceChart {
     const coordinate=head===undefined?null:scale.timeToCoordinate(head),logical=coordinate===null?null:scale.coordinateToLogical(coordinate);
     if(logical!==null)scale.setVisibleLogicalRange({from:logical-85,to:logical+6});
   }
-  resetView(){if(!this.chart)return;this.chart.priceScale('right').applyOptions({autoScale:true});this.defaultRange();}
+  ensureVisiblePrices(recover=false){
+    if(!this.chart)return;
+    const time=this.chart.timeScale().getVisibleRange(),height=this.chart.paneSize().height;
+    const visible=(this.visibleCandles??[]).filter(c=>!time||(c.time>=Number(time.from)&&c.time<=Number(time.to)));
+    const candles=visible.length?visible:(this.visibleCandles??[]).slice(-85);
+    if(!candles.length||height<10)return;
+    const ys=candles.map(c=>this.series.priceToCoordinate(c.close));
+    const inside=ys.filter(y=>finite(y)&&y>1&&y<height-1).length;
+    this.target.dataset.priceVisibility=String(inside)+'/'+candles.length;
+    this.target.dataset.priceRange=JSON.stringify(this.chart.priceScale('right').getVisibleRange());
+    if(!recover||inside)return;
+    let low=Math.min(...candles.map(c=>c.low)),high=Math.max(...candles.map(c=>c.high));
+    const focus=this.layer.focusRange,center=(low+high)/2;
+    if(focus&&Math.abs((focus.low+focus.high)/2-center)<center*.05){low=Math.min(low,focus.low);high=Math.max(high,focus.high);}
+    if(!finite(low)||!finite(high)||low<=0)return;
+    const pad=Math.max((high-low)*.12,center*.0005);
+    const scale=this.chart.priceScale('right');scale.setAutoScale(false);scale.setVisibleRange({from:low-pad,to:high+pad});
+    this.target.dataset.priceRecovery='recovered';
+  }
+  resetView(){if(!this.chart)return;this.chart.priceScale('right').applyOptions({autoScale:true});this.autoScale=true;this.onAutoScale?.();this.defaultRange();requestAnimationFrame(()=>this.ensureVisiblePrices(true));}
   captureView(){if(!this.chart)return null;const price=this.chart.priceScale('right');return {time:this.chart.timeScale().getVisibleLogicalRange(),price:price.getVisibleRange(),autoScale:price.options().autoScale};}
   restoreView(view){if(!this.chart||!view)return;if(view.time)this.chart.timeScale().setVisibleLogicalRange(view.time);const price=this.chart.priceScale('right');price.applyOptions({autoScale:view.autoScale});if(!view.autoScale&&view.price)price.setVisibleRange(view.price);}
   setControlZones(zones){if(this.layer&&JSON.stringify(zones)!==JSON.stringify(this.layer.controlZones)){this.layer.controlZones=zones;this.layer.requestUpdate?.();}}

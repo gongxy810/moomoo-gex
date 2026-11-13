@@ -79,15 +79,19 @@ test('board nodes gain thirty opacity points over the prior rendering, capped at
 test('SPX proxy uses recorded SPXW parity and closed SPY bars without reading past Replay',()=>{
   const spy={barMinutes:1,bars:[
     {at:'2026-11-09T14:59:00Z',o:99,h:101,l:98,c:100,phase:'RTH'},
-    {at:'2026-11-09T15:00:00Z',o:100,h:102,l:99,c:101,phase:'RTH'}]};
+    {at:'2026-11-09T15:01:00Z',o:100,h:102,l:99,c:101,phase:'RTH'},
+    {at:'2026-11-09T22:00:00Z',o:102,h:104,l:101,c:103,phase:'POST'}]};
   const ref={symbol:'SPXW',optionRoot:'SPXW',collectedAt:'2026-11-09T15:00:10Z',
-    spot:{value:1000,at:'2026-11-09T15:00:05Z',status:'REF',source:'SPXW call/put mids · K+C−P (rate omitted)',referenceExpiry:'2026-11-09'}};
-  const future={...ref,collectedAt:'2026-11-09T15:02:10Z',spot:{...ref.spot,value:1010,at:'2026-11-09T15:02:05Z'}};
+    sessionClose:'2026-11-09T21:00:00Z',calibration:{available:true,model:'spy10-next-expiry-basis-v1',value:1003,at:'2026-11-09T15:00:05Z',expiry:'2026-11-10'}};
+  const future={...ref,collectedAt:'2026-11-09T15:02:10Z',calibration:{...ref.calibration,value:1100,at:'2026-11-09T15:02:05Z'}};
   assert.equal(spxProxy(spy,[ref],Date.parse('2026-11-09T15:00:00Z')).available,false);
   const result=spxProxy(spy,[ref,future],Date.parse('2026-11-09T15:01:30Z'));
-  assert.equal(result.available,true);assert.equal(result.ratio,10);
-  assert.deepEqual(result.bars.map(b=>[b.o,b.h,b.l,b.c]),[[990,1010,980,1000],[1000,1020,990,1010]]);
-  assert.equal(result.quality,'0DTE parity forward');assert.equal(result.priceSymbol,'SPX_PROXY');
+  assert.equal(result.available,true);assert.equal(result.basis,3);
+  assert.deepEqual(result.bars.map(b=>[b.o,b.h,b.l,b.c]),[[1003,1023,993,1013]]);
+  assert.equal(result.quality,'Rolling Basis');assert.equal(result.priceSymbol,'SPX_PROXY');
+  const eth=spxProxy(spy,[ref],Date.parse('2026-11-09T22:01:00Z'));
+  assert.equal(eth.quality,'ETH · Locked Basis');assert.equal(eth.bars.at(-1).c,1033);
+  assert.equal(spxProxy(spy,[{...ref,calibration:{...ref.calibration,expiry:'2026-11-09'}}],Date.parse('2026-11-09T22:01:00Z')).available,false);
   assert.equal(spxProxy(spy,[],Date.parse('2026-11-09T15:01:30Z')).available,false);
 });
 test('node strength uses the complete source strike set and preserves shape through sign flips',()=>{

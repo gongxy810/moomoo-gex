@@ -5,7 +5,7 @@ from shutil import copyfile
 root = Path(__file__).resolve().parent.parent
 target = root/'dist'/'opend-gex-relay.zip'
 target.parent.mkdir(exist_ok=True)
-files = [root/name for name in ('opend_board.py', 'relay.py', 'market.py', 'snapshots.py', 'providers.py', 'requirements.txt', 'README.txt', 'VALIDATION.md', 'start-windows.cmd')]
+files = [root/name for name in ('opend_board.py', 'relay.py', 'market.py', 'snapshots.py', 'spx_calibration.py', 'providers.py', 'requirements.txt', 'README.txt', 'VALIDATION.md', 'start-windows.cmd')]
 files += [p for p in (root/'web').rglob('*') if p.is_file() and p.suffix != '.zip']
 files += [p for p in (root/'tradingview').rglob('*') if p.is_file()]
 public_closes = root/'data'/'verified-index-closes.json'

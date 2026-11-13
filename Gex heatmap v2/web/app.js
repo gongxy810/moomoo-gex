@@ -2,10 +2,10 @@ import { symbols, pollMs, finite, datesFor, nearest, sum, net, groups, king, vel
   baseline, palette, termPalette, demoFrame, rowVelocity, dayChange, walls, retainHistory, strikeView, viewSettings } from './model.js';
 import {PriceChart} from './chart.js';
 import {ChartTools,DarkSelect} from './tools.js';
-import {ReplayClock,frameAt,marketDate,spotLabel,spotPosition,snapshotTrail,etTimestamp} from './replay.js';
+import {ReplayClock,frameAt,marketDate,spotLabel,spotPosition,snapshotTrail,etTimestamp,spxProxy} from './replay.js';
 import {openDExpected,fixedDayRange,outsideDayRange,coneHeld,pinScore,tempestExpected,tempestDayRange,tempestRunningSigma} from './expected.js';
 import {gexSnapshot,pineHistorySnapshot} from './gex-export.js';
-import {spxProxy} from './spx-proxy.js';
+
 
 const $ = id => document.getElementById(id);
 const WALL_KING_LINE_STYLE=2; // Lightweight Charts LineStyle.Dashed
@@ -37,6 +37,10 @@ const latestPrice=(frame,symbol)=>{
   return Date.parse(live.collectedAt??0)>=Date.parse(snapshot?.collectedAt??frame?.collectedAt??0)?live:snapshot??live;
 };
 const chart=new PriceChart($('plot'));
+const resetChartButton=$('reset-chart-view');resetChartButton.textContent='Reset view';
+resetChartButton.type='button';resetChartButton.id='reset-chart-view';
+resetChartButton.title='恢复价格自动缩放与最近 K 线视野';
+resetChartButton.onclick=()=>{state.chartAutoScale=true;chart.resetView();render();};
 chart.onManualScale=()=>{state.chartAutoScale=false;};
 chart.onAutoScale=()=>{state.chartAutoScale=true;};
 chart.onNeedHistory=(from,to)=>{if(state.source==='opend'){void extendHistory(state.symbol,from,to);if(state.symbol==='SPXW')void extendHistory('SPY',from,to);}};
@@ -212,11 +216,11 @@ function renderChart(view) {
   const proxy=state.symbol==='SPXW'&&!nativeCash?spxProxy(spyPrice,historyFor('SPXW'),at):null;
   renderSpxLevels(view,frame,spot,proxy);
   $('chart-source').textContent=proxy?.available?'OpenD · SPX proxy':'OpenD · GEX 图';
-  $('chart-source').title=proxy?.available?'SPY 分钟 K 线 × 同交易日 SPXW 配对期权 REF / SPY 收盘价比例 · Estimated':'OpenD 期权 GEX 与价格';
+  $('chart-source').title=proxy?.available?'SPY × 10 + 已观测的非当日到期 SPXW Basis · Estimated':'OpenD 期权 GEX 与价格';
   if(proxy?.available){
     $('chart-title').textContent=`SPX proxy ${px(proxy.bars.at(-1).c)} · SPXW GEX`;
-    $('chart-title').title=`${proxy.model} · ratio ${proxy.ratio.toFixed(6)} · SPXW REF ${px(proxy.refPrice)} / SPY ${px(proxy.spyPrice)} · ${proxy.refAt} · ${proxy.quality}${proxy.stale?' · stale':''}`;
-    $('chart-phase').textContent=`${replay?'Replay · ':''}Estimated / ${proxy.stale?'stale':'as of '+proxy.refAt}`;
+    $('chart-title').title=`${proxy.model} · Basis ${proxy.basis.toFixed(4)} · SPXW REF ${px(proxy.refPrice)} / SPY ${px(proxy.spyPrice)} · ${proxy.refAt} · ${proxy.quality}${proxy.stale?' · stale':''}`;
+    $('chart-phase').textContent=`${replay?'Replay · ':''}Estimated / ${proxy.quality}`;
   }
   $('cone').setAttribute('aria-pressed',state.cone);$('derived').setAttribute('aria-pressed',state.derived);
   for(const [id,key] of [['nodes','nodes'],['walls','walls'],['day-range','dayRange'],['two-sigma','twoSigma']])$(id).checked=!!state[key];
@@ -327,7 +331,7 @@ function renderChart(view) {
   chart.update({symbol:state.symbol,bars:chartHasPrice?bars:[],minutes:state.candleMinutes,sourceMinutes,at,nodes:chartHasPrice?nodes:[],cone:chartHasPrice&&cone?{...cone,sigmas:state.twoSigma?[1,2]:[1]}:null,
     focusRange:chartHasPrice?focusRange:null,
     levels:chartHasPrice?priceLevels:[],spot:chartHasPrice?(proxy?.available?{value:bars.at(-1)?.c}:spot):null,replay,session:state.chartSession,annotations:chartHasPrice?annotations:[],nodeScale:{min:state.nodeMin,max:state.nodeMax,alphaMin:state.nodeAlphaMin,alphaMax:state.nodeAlphaMax},drawingsVisible:state.drawingsVisible,autoScale:state.chartAutoScale,candleStyle:state.candleStyle});
-  if(proxy?.available)messages.push(`SPX proxy · SPY K 线 × ${proxy.ratio.toFixed(6)} · SPXW 配对期权 REF ${proxy.refAt} · ${proxy.quality}${proxy.stale?' · stale':''} · 本地近似，非现金指数报价`);
+  if(proxy?.available)messages.push(`SPX proxy · SPY × 10 + Basis (${proxy.basis>=0?'+':''}${proxy.basis.toFixed(4)}) · ${proxy.quality} · 到期 ${proxy.referenceExpiry} · 校准 ${proxy.refAt} · SPY K ${proxy.lastBarAt} · 本地近似，非现金指数报价`);
   if(state.symbol==='SPXW'&&!chartHasPrice)messages.push(`SPX 自绘图不可用：${proxy?.reason??'SPX 现金指数与同步推算价均不可用'}；SPXW 原始 Levels 单列`);
   if(frame?.historyUnavailable)messages.push('历史 GEX 不可用：该时点之前没有期权快照');
   if(state.dayRange&&!range)messages.push('Day Range 不可用：缺少前收时可验证的 ATM IV 快照');

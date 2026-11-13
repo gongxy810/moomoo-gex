@@ -11,6 +11,7 @@ import socket
 import json
 from market import Calendar, ET, iso, quote, stamp, symbol_code, verified_close
 from snapshots import SnapshotStore
+from spx_calibration import calibration_reference
 from providers import OpenDPriceProvider, RoutedPriceProvider
 
 MODEL = 'OI-gamma-100-unadjusted-v1'
@@ -484,6 +485,9 @@ class OpenDFeed:
                     'dates': dates, 'availableDates': available, 'cells': cells, 'bars': price['bars'],
                     'price': price, 'warnings': warnings, 'refreshSeconds': 30, 'pipeline':pipeline, **calendar.payload(start)}
             frame['cacheKey']=cache_identity(frame)
+            if symbol == 'SPXW':
+                frame['calibration'] = calibration_reference(cells, frame['collectedAt'],
+                    {d:iso(calendar.close(d)) for d in dates if calendar.close(d)})
             stage=monotonic()
             self.cache[symbol] = (monotonic(), frame)
             self.store.save(frame)
@@ -582,3 +586,4 @@ class SnapshotManager:
 
     def close(self):
         self.closed=True;self.pool.shutdown(wait=True,cancel_futures=True);self.price_pool.shutdown(wait=True,cancel_futures=True)
+

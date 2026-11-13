@@ -23,7 +23,7 @@ VERSION = '2026-11-10-replay-validation-v2'
 def source_revision():
     root=Path(__file__).resolve().parent
     return hashlib.sha256(b''.join((root/name).read_bytes() for name in
-        ['opend_board.py','relay.py','market.py','providers.py','snapshots.py'])).hexdigest()[:16]
+        ['opend_board.py','relay.py','market.py','providers.py','snapshots.py','spx_calibration.py'])).hexdigest()[:16]
 
 LOADED_REVISION=source_revision()
 

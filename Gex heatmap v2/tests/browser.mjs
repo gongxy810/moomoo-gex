@@ -54,6 +54,7 @@ function frame(symbol,index=41){
   return {...base,symbol,source:'opend',model:'test-v1',optionRoot:symbol,previousCloseDate:'2026-11-06',
     sessionClose:'2026-11-09T21:00:00Z',previousSession:'2026-11-06',previousSessionClose:'2026-11-06T21:00:00Z',
     collectedAt:new Date(Date.parse(base.collectedAt)+sequence*1000).toISOString(),spot:quote,bars:cash?bars:[],
+    ...(symbol==='SPXW'?{calibration:{available:true,model:'spy10-next-expiry-basis-v1',value:spot,at:base.collectedAt,expiry:'2026-11-10'}}:{}),
     price:{symbol,collectedAt:new Date(Date.parse(base.collectedAt)+sequence*1000).toISOString(),previousClose:base.previousClose,previousCloseDate:'2026-11-06',priceSymbol:symbol==='SPXW'?'SPX':symbol,bars:cash?bars:[],barMinutes:1,source:'TEST FIXTURE',spot:cash?quote:null,
       sessions:{'2026-11-06':'2026-11-06T21:00:00Z','2026-11-09':'2026-11-09T21:00:00Z'},dailyCloses:[{date:'2026-11-06',close:base.previousClose}]}};
 }
@@ -171,12 +172,13 @@ try{
   }
   else if(focusSwitch){
     const before=process.argv.includes('--before'),tag=before?'before':'after';
-    const stateOf=()=>evaluate("(()=>{const p=document.querySelector('.chart-panel'),plot=document.querySelector('#plot');return {activeSymbol:p.dataset.activeSymbol,chartMode:p.dataset.chartMode,candles:Number(plot.dataset.candles??0),nodes:Number(plot.dataset.nodeAuditCount??0),iframe:document.querySelector('#tv-widget iframe')?.src??null,replayCursor:plot.dataset.cursor,title:document.querySelector('#chart-title').textContent,source:document.querySelector('#chart-source').textContent,levels:document.querySelector('#spx-levels').hidden?'':document.querySelector('#spx-levels').textContent,message:document.querySelector('#chart-message').textContent,leftQuote:document.querySelector('[data-ladder=left] .header-spot').textContent}})()");
+    const stateOf=()=>evaluate("(()=>{const p=document.querySelector('.chart-panel'),plot=document.querySelector('#plot');return {activeSymbol:p.dataset.activeSymbol,chartMode:p.dataset.chartMode,priceVisibility:plot.dataset.priceVisibility,priceRange:plot.dataset.priceRange,candles:Number(plot.dataset.candles??0),nodes:Number(plot.dataset.nodeAuditCount??0),iframe:document.querySelector('#tv-widget iframe')?.src??null,replayCursor:plot.dataset.cursor,title:document.querySelector('#chart-title').textContent,source:document.querySelector('#chart-source').textContent,levels:document.querySelector('#spx-levels').hidden?'':document.querySelector('#spx-levels').textContent,message:document.querySelector('#chart-message').textContent,leftQuote:document.querySelector('[data-ladder=left] .header-spot').textContent}})()");
     const snap=async name=>{const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,`focus-${tag}-${name}.png`),Buffer.from(shot.data,'base64'));};
     await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click()");await wait(350);
     const spyStart=await stateOf();await snap('spy-start');
     await evaluate("document.querySelector('#symbols button[data-symbol=SPXW]').click()");
     if(!before)await until("document.querySelector('.chart-panel').dataset.activeSymbol==='SPXW' && +document.querySelector('#plot').dataset.candles>0");
+    if(live){await wait(1800);await until("!document.querySelector('#chart-message').textContent.includes('历史节点加载中')");}
     await wait(350);const spxButton=await stateOf();await snap('spx-button');
     await evaluate("document.querySelector('[data-ladder=middle] .focus-column').click()");await wait(350);
     const spyReturn=await stateOf();await snap('spy-return');
@@ -238,6 +240,13 @@ try{
     assert.ok(Math.abs(horizontal.time.from-axis.time.from)>1);
     assert.ok(Math.abs(span(refreshed)-span(horizontal))<.001&&!refreshed.auto);
     assert.ok(reset.auto&&reset.prefAuto);
+    await evaluate("__designChart.chart.priceScale('right').setAutoScale(false);__designChart.chart.priceScale('right').setVisibleRange({from:390,to:410});__testState.chartAutoScale=false;document.querySelector('[data-ladder=left] .focus-column').click()");
+    await wait(150);
+    await evaluate("document.querySelector('[data-ladder=middle] .focus-column').click()");await wait(150);
+    const switched=await state();assert.ok(switched.auto&&switched.prefAuto);
+    assert.ok(switched.range.from>700&&switched.range.to<800);
+    await evaluate("__designChart.chart.priceScale('right').setAutoScale(false);__designChart.chart.priceScale('right').setVisibleRange({from:390,to:410});__testState.chartAutoScale=false;document.querySelector('#reset-chart-view').click()");await wait(120);
+    const recovered=await state();assert.ok(recovered.auto&&recovered.prefAuto&&recovered.range.from>700);
     assert.deepEqual(exceptions,[]);
     console.log(JSON.stringify({coords,before,wheel,pane,axis,horizontal,refreshed,reset,exceptions}));
   }
