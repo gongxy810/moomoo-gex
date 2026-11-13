@@ -148,8 +148,8 @@ export class ChartTools{
       ['expectedHorizon','结算期限',[['today','Today to close'],['front','Front available expiry']]],
       ['nodeMin','节点最小宽度（px）',[[1,'1'],[2,'2'],[3,'3']]],
       ['nodeMax','节点最大宽度（仍受间距限制）',[[4,'4'],[6,'6'],[8,'8']]],
-      ['nodeAlphaMin','最弱节点透明度',[[.04,'4%'],[.08,'8%'],[.10,'10%'],[.12,'12%']]],
-      ['nodeAlphaMax','强节点透明度',[[.42,'42%'],[.5,'50%'],[.6,'60%'],[.65,'65%']]]]){
+      ['nodeAlphaMin','最弱节点不透明度',[[.10,'10%'],[.20,'20%'],[.30,'30%'],[.40,'40%']]],
+      ['nodeAlphaMax','强节点不透明度',[[.65,'65%'],[.75,'75%'],[.85,'85%'],[.95,'95%']]]]){
       const row=node('label',label,'tool-setting'),select=node('select');select.dataset.setting=key;
       for(const [value,text] of values){const o=node('option',text);o.value=String(value);if(key==='expectedProvider'&&value==='Tempest'&&!s.tempest?.[s.symbol]?.configured)o.disabled=true;select.append(o);}select.value=String(s[key]);
       select.onchange=()=>{this.setState(key,['chartSession','candleStyle','expectedProvider','expectedHorizon'].includes(key)?select.value:Number(select.value));this.savePrefs();};row.append(select);this.dialog.append(row);
@@ -210,3 +210,4 @@ export class ChartTools{
     this.root.classList?.toggle('drawing-active',!!this.chart.drawingMode);this.drawingBox.classList?.toggle('drawing-active',!!this.chart.drawingMode);this.layout();
   }
 }
+

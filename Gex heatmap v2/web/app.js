@@ -19,7 +19,7 @@ try {const saved=JSON.parse(localStorage.getItem('gex-columns'));state.columns=A
 state.symbol=state.columns[0].symbol;
 Object.assign(state,{focusId:'left',histories:{},prices:{},candleMinutes:5,chartMode:'gex',chartModeBySymbol:{},nodes:true,top:5,threshold:10,walls:true,dayRange:false,twoSigma:false});
 Object.assign(state,{replayCursor:null,replayHistories:{},replayPending:new Set(),replayDateOrder:[],priceHistory:{},placeholders:{},columnStatus:{},columnVersions:{},
-  chartSession:'ALL',drawingsVisible:true,nodeMin:2,nodeMax:8,nodeAlphaMin:.10,nodeAlphaMax:.65,supportedPeriods:[1,2,5,15],requests:[],sourceGeneration:0,captureStatus:{},priceStatus:{},replayRequestVersions:{},replayWindowBounds:{},historyBounds:{},historyPending:{}});
+  chartSession:'ALL',drawingsVisible:true,nodeMin:2,nodeMax:8,nodeAlphaMin:.30,nodeAlphaMax:.85,supportedPeriods:[1,2,5,15],requests:[],sourceGeneration:0,captureStatus:{},priceStatus:{},replayRequestVersions:{},replayWindowBounds:{},historyBounds:{},historyPending:{}});
 Object.assign(state,{expectedProvider:'OpenD',expectedHorizon:'today',tempest:{},fixedRanges:[],chartAutoScale:true,candleStyle:'classic'});
 try{const records=JSON.parse(localStorage.getItem('gex-fixed-ranges-v1')??'[]');if(Array.isArray(records))state.fixedRanges=records.filter(r=>r&&r.available&&finite(r.at)&&finite(r.until)).slice(-1000);}catch{}
 const selectedSymbols=()=>[...new Set(state.columns.map(c=>c.symbol))];
@@ -344,7 +344,10 @@ function renderChart(view) {
       (finite(outside.sigma)?` · ${outside.sigma>=0?'+':''}${outside.sigma.toFixed(2)}σ from center`:'');
     annotations.push({price:outside.boundary,text,color:'#b9cee9'});messages.push(text);}
   state.pinStats=pinForFrame&&chartHasPrice?pinScore(state.pinned.cone,bars,state.candleMinutes,sourceMinutes,at):null;
+  const focusRange=fixed&&finite(fixed.impliedLow1)&&finite(fixed.impliedHigh1)&&fixed.impliedHigh1>fixed.impliedLow1?
+    {low:fixed.impliedLow1,high:fixed.impliedHigh1}:null;
   chart.update({symbol:state.symbol,bars:chartHasPrice?bars:[],minutes:state.candleMinutes,sourceMinutes,at,nodes:chartHasPrice?nodes:[],cone:chartHasPrice&&cone?{...cone,sigmas:state.twoSigma?[1,2]:[1]}:null,
+    focusRange:chartHasPrice?focusRange:null,
     levels:chartHasPrice?priceLevels:[],spot:chartHasPrice?spot:null,replay,session:state.chartSession,annotations:chartHasPrice?annotations:[],nodeScale:{min:state.nodeMin,max:state.nodeMax,alphaMin:state.nodeAlphaMin,alphaMax:state.nodeAlphaMax},drawingsVisible:state.drawingsVisible,autoScale:state.chartAutoScale,candleStyle:state.candleStyle});
   if(state.symbol==='SPXW'&&!chartHasPrice)messages.push('SPX 现金指数 1m K 线不可用（OpenD：暂不支持美股指数）；原始 SPXW Levels 单列，REF 不是真实指数 Spot');
   if(frame?.historyUnavailable)messages.push('历史 GEX 不可用：该时点之前没有期权快照');

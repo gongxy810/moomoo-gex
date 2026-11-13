@@ -62,6 +62,14 @@ test('node marks obey spacing/strike bounds, merge collisions without losing sou
   assert.ok(marks.find(m=>m.derived).h>marks.find(m=>m.derived).w);
   assert.ok(nodeGeometry([n('X',1)],t=>t,p=>p,2,scale)[0].w<=1.44);
 });
+test('board node opacity rises by twenty points without changing node geometry',()=>{
+  const node={time:1,price:100,strike:100,source:'SPY',weight:.5,value:50,king:100};
+  const geometry=scale=>nodeGeometry([node],t=>t*10,p=>p,16,scale)[0];
+  const before=geometry({min:2,max:8,alphaMin:.10,alphaMax:.65});
+  const after=geometry({min:2,max:8,alphaMin:.30,alphaMax:.85});
+  assert.ok(Math.abs(after.alpha-before.alpha-.20)<1e-10);
+  assert.equal(after.w,before.w);assert.equal(after.h,before.h);
+});
 test('node strength uses the complete source strike set and preserves shape through sign flips',()=>{
   const cells=[{expiry:'d',strike:100,call:20,put:0},{expiry:'d',strike:101,call:80,put:0},
     {expiry:'d',strike:102,call:100,put:0}];
@@ -131,3 +139,4 @@ test('fixed range refuses intraday IV backfill; cone uses calendar half-day end'
   const range=dayRange(f,[captured]);assert.ok(range.move>0);assert.equal(range.iv,.2);
   assert.deepEqual(dayRange({...f,spot:{...f.spot,value:110}},[captured]),range);
 });
+

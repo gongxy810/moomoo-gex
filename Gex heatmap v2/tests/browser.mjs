@@ -246,6 +246,9 @@ try{
     const capture=async name=>{await wait(120);const r=await evaluate("(()=>{const r=document.querySelector('#plot').getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,scale:1}})()");const shot=await send('Page.captureScreenshot',{format:'png',clip:r});await writeFile(resolve(artifacts,name+'.png'),Buffer.from(shot.data,'base64'));};
     const above=await setSpot(753);assert.ok(above.outside.includes('Above')&&above.outside.includes('+1.50σ'));await capture('range-above');
     const inside=await setSpot(750);assert.ok(!inside.outside.includes("today's expected range"));await capture('range-inside');
+    const axis=await evaluate("(()=>({focus:JSON.parse(document.querySelector('#plot').dataset.priceFocus),visible:__designChart.chart.priceScale('right').getVisibleRange()}))()");
+    assert.deepEqual(axis.focus,{low:748,high:752});
+    assert.ok(axis.visible&&axis.visible.to-axis.visible.from<12,`Day ±1σ axis remains too wide: ${JSON.stringify(axis.visible)}`);
     const exported=await evaluate("(()=>{document.querySelector('#export-gex-levels').click();const row=document.querySelector('#gex-snapshot').value,status=document.querySelector('#gex-export-status').textContent,copyEnabled=!document.querySelector('#copy-gex-snapshot').disabled;document.querySelector('#gex-export-dialog').close();return {row,status,copyEnabled}})()");
     const fields=exported.row.split(',');assert.equal(fields.length,7);assert.equal(fields[0],'SPY');assert.equal(fields[1],'20261109');assert.equal(fields[4],'748');assert.equal(fields[5],'752');assert.ok(exported.copyEnabled);
     const below=await setSpot(747);assert.ok(below.outside.includes('Below')&&below.outside.includes('-1.50σ'));await capture('range-below');
@@ -260,7 +263,7 @@ try{
     await evaluate("__testState.replayCursor=Date.parse('2026-11-09T18:07:00Z');__testRender()");
     const replayLater=await evaluate("({cursor:+document.querySelector('#plot').dataset.cursor,lastNode:+document.querySelector('#plot').dataset.nodeLastAt,cone:document.querySelector('#plot').dataset.cone,pin:__testState.pinActive})");
     assert.ok(!replayLater.pin&&(!replayLater.lastNode||replayLater.lastNode<=replayLater.cursor));await capture('range-replay-later');
-    const report={marketData:'synthetic fixture',sample,above,inside,below,exported,pinned:JSON.parse(pinned),replay,replayLater,exceptions};
+    const report={marketData:'synthetic fixture',sample,axis,above,inside,below,exported,pinned:JSON.parse(pinned),replay,replayLater,exceptions};
     await writeFile(resolve(artifacts,'range-scenarios.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({passed:true,sample,above:above.outside,inside:inside.outside,below:below.outside,pinFrozen:true,replay}));
   }
   else if(derivedOnly){

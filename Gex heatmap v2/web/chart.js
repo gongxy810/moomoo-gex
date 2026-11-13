@@ -6,7 +6,7 @@ const et=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'2-di
 export const NODE_STYLE={
   ellipse:{minWidth:2.4,maxWidth:8,minHeight:2.3,maxHeight:7},
   diamond:{minWidth:2,maxWidth:6.5,minHeight:3,maxHeight:22},
-  alphaMin:.10,alphaRange:.55,alphaPower:.75,kingAlpha:.72,maxSpacingRatio:.72,
+  alphaMin:.30,alphaRange:.55,alphaPower:.75,kingAlpha:.92,maxSpacingRatio:.72,
   positive:'#E9BA48',negative:'#8738D1'
 };
 
@@ -24,7 +24,7 @@ export function nodeGeometry(nodes,x,y,spacing,scale){
     const h=shape==='diamond'?idealHeight:Math.min(idealHeight,Math.max(2,w*.95));
     const alphaMin=finite(scale.alphaMin)?scale.alphaMin:NODE_STYLE.alphaMin;
     const alphaMax=finite(scale.alphaMax)?scale.alphaMax:NODE_STYLE.alphaMin+NODE_STYLE.alphaRange;
-    const alpha=(s>=.999?Math.min(.8,alphaMax+.07):alphaMin+(alphaMax-alphaMin)*power)*Math.min(1,Math.max(.35,spacing/4));
+    const alpha=(s>=.999?Math.min(.95,alphaMax+.07):alphaMin+(alphaMax-alphaMin)*power)*Math.min(1,Math.max(.35,spacing/4));
     const color=n.value>=0?NODE_STYLE.positive:NODE_STYLE.negative;
     const gx=Math.floor(n.x/8),gy=Math.floor(n.y/8);let hit;
     for(let dx=-1;dx<=1&&!hit;dx++)for(let dy=-1;dy<=1&&!hit;dy++)
@@ -43,14 +43,14 @@ export function nodeGeometry(nodes,x,y,spacing,scale){
 
 // A v5 series primitive: nodes use bottom, annotations/drawings use top.
 class ExposureLayer {
-  constructor(){this.nodes=[];this.curves=[];this.hits=[];this.annotations=[];this.drawings=[];this.scale={min:2,max:8,alphaMin:.10,alphaMax:.65};}
+  constructor(){this.nodes=[];this.curves=[];this.hits=[];this.annotations=[];this.drawings=[];this.scale={min:2,max:8,alphaMin:.30,alphaMax:.85};this.focusRange=null;}
   attached({chart,series,requestUpdate}){Object.assign(this,{chart,series,requestUpdate});}
   detached(){this.chart=null;this.series=null;}
   paneViews(){return ['bottom','top'].map(pass=>({zOrder:()=>pass,renderer:()=>({draw:target=>target.useMediaCoordinateSpace(({context:ctx})=>this.draw(ctx,pass))})}));}
   update(nodes,curves,annotations=[],drawings=[]){this.nodes=nodes;this.curves=curves;this.annotations=annotations;this.drawings=drawings;this.requestUpdate?.();}
   autoscaleInfo(){
-    const values=[...this.nodes.map(n=>n.price),...this.curves.flatMap(c=>c.map(p=>p.price))].filter(finite);
-    return values.length?{priceRange:{minValue:Math.min(...values),maxValue:Math.max(...values)}}:null;
+    const range=this.focusRange;
+    return range?{priceRange:{minValue:range.low,maxValue:range.high}}:null;
   }
   draw(ctx,pass){
     if(!this.chart)return;
@@ -111,7 +111,7 @@ export class PriceChart {
     if(!L){target.textContent='图表依赖尚未安装。热图仍可使用；Lightweight Charts 本地依赖缺失。';return;}
     const mount=document.createElement('div');mount.className='chart-canvas';target.append(mount);
     this.chart=L.createChart(mount,{autoSize:true,layout:{background:{type:'solid',color:'#0B0B0D'},textColor:'#aaa6b5',attributionLogo:true},
-      grid:{vertLines:{color:'#1B1B20'},horzLines:{color:'#1B1B20'}},rightPriceScale:{borderColor:'#292932'},
+      grid:{vertLines:{color:'#1B1B20'},horzLines:{color:'#1B1B20'}},rightPriceScale:{borderColor:'#292932',scaleMargins:{top:.08,bottom:.08}},
       timeScale:{timeVisible:true,secondsVisible:false,borderColor:'#33313c',tickMarkFormatter:t=>et.format(new Date(Number(t)*1000))},
       localization:{timeFormatter:t=>et.format(new Date(Number(t)*1000))+' ET'},
       crosshair:{mode:L.CrosshairMode.Normal},handleScroll:true,handleScale:true});
@@ -160,7 +160,7 @@ export class PriceChart {
       this.historyTimer=setTimeout(()=>this.onNeedHistory(Number(range.from)*1000,Number(range.to)*1000),120);
     });
   }
-  update({symbol,bars,minutes,sourceMinutes,at,nodes,cone,levels,spot,replay=false,session='ALL',annotations=[],nodeScale,drawingsVisible=true,autoScale=true,candleStyle='classic'}){
+  update({symbol,bars,minutes,sourceMinutes,at,nodes,cone,levels,spot,focusRange=null,replay=false,session='ALL',annotations=[],nodeScale,drawingsVisible=true,autoScale=true,candleStyle='classic'}){
     if(!this.chart)return false;
     const renderStarted=performance.now();
     const key=symbol+'|'+minutes;
@@ -175,6 +175,8 @@ export class PriceChart {
     const eligible=bars.filter(b=>session==='ALL'||(session==='EXT'?['PRE','POST'].includes(b.phase):b.phase===session));
     const candles=replay?closedCandles(eligible,minutes,sourceMinutes,at):aggregateBars(eligible.filter(b=>Date.parse(b.at)<=at),minutes,sourceMinutes);
     this.visibleCandles=candles;
+    this.layer.focusRange=focusRange&&finite(focusRange.low)&&finite(focusRange.high)&&focusRange.high>focusRange.low?focusRange:null;
+    this.target.dataset.priceFocus=this.layer.focusRange?JSON.stringify(this.layer.focusRange):'candles';
     this.target.dataset.nodeLastAt=nodes.length?String(Math.max(...nodes.map(n=>Date.parse(n.at)))):'';
     this.target.dataset.candles=String(candles.length);
     this.target.dataset.lastCandleClose=candles.length?String((candles.at(-1).time+minutes*60)*1000):'';
@@ -192,11 +194,17 @@ export class PriceChart {
     const curves=[];
     if(cone)for(const curve of cone.curves??[])if(cone.sigmas.includes(curve.sigma))curves.push(curve.points);
     this.target.dataset.cone=cone?JSON.stringify({provider:cone.provider,at:cone.at,until:cone.until,spot:cone.spot,iv:cone.iv,curves}):'';
+    // Keep every node/cone time on the chart's time axis without letting remote
+    // GEX strikes or future cone prices expand the candle price axis.
+    const anchorPrice=this.layer.focusRange?(this.layer.focusRange.low+this.layer.focusRange.high)/2:
+      (candles.at(-1)?.close??(finite(spot?.value)?spot.value:nodes.at(-1)?.price));
     const anchors=new Map();
-    for(const node of nodes)anchors.set(node.time,node.price);
-    for(const c of curves)for(const p of c)anchors.set(p.time,p.price);
-    if(candles.length)anchors.set(candles.at(-1).time,finite(spot?.value)?spot.value:candles.at(-1).close);
-    if(!candles.length&&finite(spot?.value))anchors.set(Math.floor(at/1000),spot.value);
+    if(finite(anchorPrice)){
+      for(const node of nodes)anchors.set(node.time,anchorPrice);
+      for(const c of curves)for(const p of c)anchors.set(p.time,anchorPrice);
+      if(candles.length)anchors.set(candles.at(-1).time,anchorPrice);
+      if(!candles.length&&finite(spot?.value))anchors.set(Math.floor(at/1000),anchorPrice);
+    }
     const anchorData=[...anchors].sort((a,b)=>a[0]-b[0]).map(([time,value])=>({time,value})),anchorKey=JSON.stringify(anchorData);
     if(anchorKey!==this.anchorKey){this.anchor.setData(anchorData);this.anchorKey=anchorKey;}
     const levelKey=JSON.stringify(levels.map(l=>[l.price,l.color,l.style,l.label]));
@@ -318,3 +326,4 @@ export class PriceChart {
     return {blob,filename:`${symbol}_${minutes}m_${new Date(at).toISOString().replace(/[:.]/g,'-')}_${mode}.png`};
   }
 }
+
