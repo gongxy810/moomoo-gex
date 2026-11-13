@@ -190,8 +190,6 @@ dialog::backdrop {background:#000b}
 .chart-tools.compact,.chart-tools.compact .tool-actions {gap:3px}.chart-tools.compact button {width:28px;height:28px;padding:5px}
 .corner-cone {flex-direction:column;align-items:flex-end;gap:7px;max-width:calc(100% - 130px)}
 .corner-cone [data-action=cone-details] {border:0;background:transparent;color:#898690;padding:0;font-size:11px;white-space:nowrap}
-.chart-mode-switch {display:flex;gap:2px;padding:2px;border:1px solid #34333b;border-radius:7px;background:#17171c}
-.chart-mode-switch[hidden],#tv-app-cone[hidden],#tv-app-spot[hidden] {display:none!important}
 .spx-levels {display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:5px 9px;border-bottom:1px solid var(--line);color:#b9ac86;background:#111114;font:10px var(--mono)}
 .spx-levels[hidden] {display:none!important}
 .spx-levels strong {color:#e5c461}
@@ -201,23 +199,7 @@ dialog::backdrop {background:#000b}
 .chart-empty strong {color:#e5c461;font:600 15px var(--mono)}
 .chart-empty p {max-width:340px;color:#aaa5ae;font:11px/1.6 var(--mono)}
 .chart-empty button {font-size:11px}
-.chart-mode-switch button {border:0;background:transparent;color:#aaa8b1;padding:4px 8px}
-.chart-mode-switch button[aria-pressed="true"] {background:#39313f;color:#f5df95}
 #chart-source {color:#a7a3ae;font:10px var(--mono);white-space:nowrap}
-#tv-app-cone {color:#a8cbbd;font:10px var(--mono);white-space:nowrap}
-#tv-app-spot {color:#d8c9a1;font:10px var(--mono);white-space:nowrap}
-#tv-open {display:none;font:10px var(--mono);white-space:nowrap}
-.tv-panel {position:relative;flex:1;min-height:480px;background:#101015;display:flex;flex-direction:column}
-.tv-panel[hidden] {display:none}
-#tv-widget {width:100%;flex:1;min-height:0}
-#tv-widget .tradingview-widget-container__widget {width:100%;height:calc(100% - 26px)}
-#tv-widget .tradingview-widget-copyright {height:26px;display:flex;align-items:center;justify-content:flex-end;padding:0 10px;color:#898891;font:10px var(--mono)}
-#tv-widget .tradingview-widget-copyright a {color:#c9b268}
-.tv-status {flex:none;margin:5px 8px;padding:4px 7px;border-radius:5px;background:#121218;color:#d8c9a1;font:11px var(--mono)}
-.tv-status:empty {display:none}
-.chart-panel[data-chart-mode="tradingview"] .layer-controls,.chart-panel[data-chart-mode="tradingview"] .chart-message,.chart-panel[data-chart-mode="tradingview"] .plot,.chart-panel[data-chart-mode="tradingview"] .chart-key,.chart-panel[data-chart-mode="tradingview"] .layer-meta,.chart-panel[data-chart-mode="tradingview"] .replay-start,.chart-panel[data-chart-mode="tradingview"] .replay,.chart-panel[data-chart-mode="tradingview"] .gex-chart-only {display:none}
-.chart-panel[data-chart-mode="tradingview"] #tv-open {display:inline}
-@media(max-width:540px) {.chart-mode-switch button {padding:4px 5px}.tv-panel {min-height:400px}}
 .cone-actions {display:flex;gap:5px}.cone-actions button {border-radius:4px;background:#101013e8;border-color:#38343b;color:#d1cbd8;padding:8px 9px;font-size:11px}
 .drawing-tools {position:absolute;z-index:8;display:flex;gap:8px;align-items:center;touch-action:none}
 .drawing-tools [data-action=draw] {width:36px;height:36px}.drawing-tools [data-action=drag] {border-radius:8px;width:23px;height:29px;padding:5px}
@@ -225,3 +207,4 @@ dialog::backdrop {background:#000b}
 .expected-proof {white-space:pre-wrap;overflow-wrap:anywhere;background:#0c0c10;padding:10px;max-height:320px;overflow:auto;font:11px/1.6 var(--mono)}
 .chart-tool-dialog .tool-setting input[type=number] {width:120px;background:#101014;color:var(--text);border:1px solid var(--line);padding:5px}
 #pin {display:none}
+

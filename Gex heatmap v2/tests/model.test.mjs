@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {velocity,baseline,rowVelocity,groups,dayChange,aggregateBars,walls,dayRange,expectedMove,retainHistory,net,nearest,strikeView,viewSettings,nodeCandidates,termPalette} from '../web/model.js';
 import {nodeGeometry} from '../web/chart.js';
+import {spxProxy} from '../web/spx-proxy.js';
 const at='2026-11-09T15:00:00Z';
 const frame=(extra={})=>({symbol:'SPY',optionRoot:'US.SPY',model:'v1',sessionDate:'2026-11-09',collectedAt:at,
   previousSession:'2026-11-06',previousSessionClose:'2026-11-06T21:00:00Z',sessionClose:'2026-11-09T21:00:00Z',
@@ -74,6 +75,20 @@ test('board nodes gain thirty opacity points over the prior rendering, capped at
   assert.ok(Math.abs(far.alpha-Math.min(.99,prior*.5+.20*.5+.30))<1e-10);
   const king=nodeGeometry([{...node,weight:1}],t=>t*10,p=>p,16,{min:2,max:8,alphaMin:.30,alphaMax:.85})[0];
   assert.equal(king.alpha,.99);
+});
+test('SPX proxy uses recorded SPXW parity and closed SPY bars without reading past Replay',()=>{
+  const spy={barMinutes:1,bars:[
+    {at:'2026-11-09T14:59:00Z',o:99,h:101,l:98,c:100,phase:'RTH'},
+    {at:'2026-11-09T15:00:00Z',o:100,h:102,l:99,c:101,phase:'RTH'}]};
+  const ref={symbol:'SPXW',optionRoot:'SPXW',collectedAt:'2026-11-09T15:00:10Z',
+    spot:{value:1000,at:'2026-11-09T15:00:05Z',status:'REF',source:'SPXW call/put mids · K+C−P (rate omitted)',referenceExpiry:'2026-11-09'}};
+  const future={...ref,collectedAt:'2026-11-09T15:02:10Z',spot:{...ref.spot,value:1010,at:'2026-11-09T15:02:05Z'}};
+  assert.equal(spxProxy(spy,[ref],Date.parse('2026-11-09T15:00:00Z')).available,false);
+  const result=spxProxy(spy,[ref,future],Date.parse('2026-11-09T15:01:30Z'));
+  assert.equal(result.available,true);assert.equal(result.ratio,10);
+  assert.deepEqual(result.bars.map(b=>[b.o,b.h,b.l,b.c]),[[990,1010,980,1000],[1000,1020,990,1010]]);
+  assert.equal(result.quality,'0DTE parity forward');assert.equal(result.priceSymbol,'SPX_PROXY');
+  assert.equal(spxProxy(spy,[],Date.parse('2026-11-09T15:01:30Z')).available,false);
 });
 test('node strength uses the complete source strike set and preserves shape through sign flips',()=>{
   const cells=[{expiry:'d',strike:100,call:20,put:0},{expiry:'d',strike:101,call:80,put:0},

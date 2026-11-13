@@ -5,8 +5,10 @@ import {ChartTools,DarkSelect} from './tools.js';
 import {ReplayClock,frameAt,marketDate,spotLabel,spotPosition,snapshotTrail,etTimestamp} from './replay.js';
 import {openDExpected,fixedDayRange,outsideDayRange,coneHeld,pinScore,tempestExpected,tempestDayRange,tempestRunningSigma} from './expected.js';
 import {gexSnapshot,pineHistorySnapshot} from './gex-export.js';
+import {spxProxy} from './spx-proxy.js';
 
 const $ = id => document.getElementById(id);
+const WALL_KING_LINE_STYLE=2; // Lightweight Charts LineStyle.Dashed
 const state = {symbol:'SPXW', source:'opend', expiry:'0dte', limit:40, frames:[], index:null,
   derived:true, cone:false, pinned:null, errors:{}, busy:false, center:'Spot', speed:5};
 let timer, controller, priceTimer, priceGeneration=0;
@@ -17,12 +19,13 @@ saveView();
 const defaults=[{id:'left',symbol:'SPXW'},{id:'middle',symbol:'SPY'},{id:'right',symbol:'QQQ'}];
 try {const saved=JSON.parse(localStorage.getItem('gex-columns'));state.columns=Array.isArray(saved)&&saved.length===3&&saved.every((c,i)=>c.id===defaults[i].id&&typeof c.symbol==='string'&&/^[A-Z0-9._-]{1,25}$/.test(c.symbol))?saved:defaults.map(c=>({...c}));}catch{state.columns=defaults.map(c=>({...c}));}
 state.symbol=state.columns[0].symbol;
-Object.assign(state,{focusId:'left',histories:{},prices:{},candleMinutes:5,chartMode:'gex',chartModeBySymbol:{},nodes:true,top:5,threshold:10,walls:true,dayRange:false,twoSigma:false});
+Object.assign(state,{focusId:'left',histories:{},prices:{},candleMinutes:5,chartMode:'gex',nodes:true,top:5,threshold:10,walls:true,dayRange:false,twoSigma:false});
 Object.assign(state,{replayCursor:null,replayHistories:{},replayPending:new Set(),replayDateOrder:[],priceHistory:{},placeholders:{},columnStatus:{},columnVersions:{},
   chartSession:'ALL',drawingsVisible:true,nodeMin:2,nodeMax:8,nodeAlphaMin:.30,nodeAlphaMax:.85,supportedPeriods:[1,2,5,15],requests:[],sourceGeneration:0,captureStatus:{},priceStatus:{},replayRequestVersions:{},replayWindowBounds:{},historyBounds:{},historyPending:{}});
 Object.assign(state,{expectedProvider:'OpenD',expectedHorizon:'today',tempest:{},fixedRanges:[],chartAutoScale:true,candleStyle:'classic'});
 try{const records=JSON.parse(localStorage.getItem('gex-fixed-ranges-v1')??'[]');if(Array.isArray(records))state.fixedRanges=records.filter(r=>r&&r.available&&finite(r.at)&&finite(r.until)).slice(-1000);}catch{}
 const selectedSymbols=()=>[...new Set(state.columns.map(c=>c.symbol))];
+const priceSymbols=()=>[...new Set([...selectedSymbols(),...(selectedSymbols().includes('SPXW')?['SPY']:[])])];
 const historyFor=symbol=>{
   const regular=state.histories[symbol]??state.frames.map(r=>r[symbol]).filter(Boolean);
   const dated=state.replayCursor!==null?state.replayHistories[`${symbol}|${marketDate(state.replayCursor)}`]:null;
@@ -36,46 +39,17 @@ const latestPrice=(frame,symbol)=>{
 const chart=new PriceChart($('plot'));
 chart.onManualScale=()=>{state.chartAutoScale=false;};
 chart.onAutoScale=()=>{state.chartAutoScale=true;};
-chart.onNeedHistory=(from,to)=>{if(state.source==='opend')void extendHistory(state.symbol,from,to);};
-let tvMounted=false;
-function mountTvWidget(){
-  if(tvMounted)return;tvMounted=true;
-  const status=$('tv-status'),container=$('tv-widget');
-  status.textContent='TradingView · FOREXCOM:SPXUSD · 1m 加载中…';
-  const script=document.createElement('script');script.async=true;
-  script.src='https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
-  script.dataset.interval='1';script.dataset.symbol='FOREXCOM:SPXUSD';
-  script.textContent=JSON.stringify({autosize:true,symbol:'FOREXCOM:SPXUSD',interval:'1',timezone:'America/New_York',theme:'dark',style:'1',locale:'en',hide_top_toolbar:false,hide_side_toolbar:false,hide_legend:false,hide_volume:true,allow_symbol_change:false,save_image:true,withdateranges:true,backgroundColor:'#0B0B0D',gridColor:'rgba(90,90,105,0.08)'});
-  script.onerror=()=>{status.textContent='TradingView 组件脚本加载失败；可使用上方链接在 TradingView 打开。';status.dataset.state='error';};
-  script.onload=()=>{status.textContent='TradingView 组件已载入；CFD 行情状态以图内提示为准。';
-    const iframe=container.querySelector('iframe');if(iframe)iframe.addEventListener('load',()=>{status.dataset.state='embedded';},{once:true});};
-  container.append(script);
-  setTimeout(()=>{if(!container.querySelector('iframe')&&status.dataset.state!=='error'){status.textContent='TradingView 图表未能嵌入；可使用上方链接在 TradingView 打开。';status.dataset.state='error';}},15000);
-}
+chart.onNeedHistory=(from,to)=>{if(state.source==='opend'){void extendHistory(state.symbol,from,to);if(state.symbol==='SPXW')void extendHistory('SPY',from,to);}};
 function hasSpxCashCandles(frame){
   const price=state.replayCursor===null?latestPrice(frame,'SPXW'):(state.priceHistory.SPXW??frame?.price);
   return price?.priceSymbol==='SPX'&&Array.isArray(price.bars)&&price.bars.some(bar=>
     [bar.o,bar.h,bar.l,bar.c].every(finite)&&Date.parse(bar.at)<= (state.replayCursor??Infinity));
 }
-function syncChartMode(frame){
-  const available=state.symbol==='SPXW',replay=state.replayCursor!==null;
-  const preferred=state.chartModeBySymbol[state.symbol]??(available&&state.source==='opend'&&!hasSpxCashCandles(frame)?'tradingview':'gex');
-  const tv=available&&!replay&&preferred==='tradingview';
-  state.chartMode=tv?'tradingview':'gex';
-  $('chart-mode-switch').hidden=!available;
-  $('mode-gex').disabled=replay;$('mode-tv').disabled=replay;
-  $('mode-tv').title=replay?'Replay 使用 GEX 自绘图':'';
-  $('mode-gex').setAttribute('aria-pressed',String(!tv));$('mode-tv').setAttribute('aria-pressed',String(tv));
-  document.querySelector('.chart-panel').dataset.chartMode=state.chartMode;
+function syncChartMode(){
+  state.chartMode='gex';
+  document.querySelector('.chart-panel').dataset.chartMode='gex';
   document.querySelector('.chart-panel').dataset.activeSymbol=state.symbol;
-  $('tv-panel').hidden=!tv;$('chart-source').textContent=tv?'TradingView · FOREXCOM:SPXUSD':'OpenD · GEX 图';
-  $('tv-app-cone').hidden=!tv;$('tv-app-spot').hidden=!tv;
-  if(tv){$('plot').dataset.candles='0';$('plot').dataset.chartDataMode='hidden-tradingview';$('plot').dataset.nodeAuditCount='0';$('plot').__gexNodeAudit=[];mountTvWidget();}
-  return tv;
 }
-$('mode-gex').onclick=()=>{if(state.replayCursor!==null)return;state.chartModeBySymbol[state.symbol]='gex';render();};
-$('mode-tv').onclick=()=>{if(state.replayCursor!==null)return;state.chartModeBySymbol[state.symbol]='tradingview';render();};
-$('empty-tv').onclick=()=>{if(state.replayCursor!==null)return;state.chartModeBySymbol.SPXW='tradingview';render();};
 const scheduleRender=()=>{if(renderQueued)return;renderQueued=true;(globalThis.requestAnimationFrame??(fn=>setTimeout(fn,0)))(()=>{renderQueued=false;render();});};
 if(globalThis.IntersectionObserver){const observer=new IntersectionObserver(entries=>{detailsVisible=entries.some(e=>e.isIntersecting);if(detailsVisible&&detailView){details(detailView);detailView=null;}},{rootMargin:'160px'});observer.observe(document.querySelector('.detail'));}
 const clock=new ReplayClock(cursor=>{
@@ -209,9 +183,9 @@ function renderLadder(column, data, previous) {
   return {ladder, body, scroll: old?.querySelector('.strike-row') ? old.scrollTop : null};
 }
 
-function renderSpxLevels(view,frame,spot,tv){
+function renderSpxLevels(view,frame,spot,proxy){
   const target=$('spx-levels');
-  const separate=state.symbol==='SPXW'&&(tv||!hasSpxCashCandles(frame));
+  const separate=state.symbol==='SPXW'&&!hasSpxCashCandles(frame)&&!proxy?.available;
   target.hidden=!separate;
   if(!separate){target.replaceChildren();return;}
   const wall=walls(view.shown,spot?.value??0);
@@ -220,9 +194,9 @@ function renderSpxLevels(view,frame,spot,tv){
   items.push(element('span',`Call Wall ${px(wall.call?.strike)}`));
   items.push(element('span',`Put Wall ${px(wall.put?.strike)}`));
   if(finite(spot?.value)&&spotLabel('SPXW',spot)==='REF')items.push(element('span',`REF ${px(spot.value)}`));
-  items.push(element('span',tv?'未映射到 CFD 图价格轴':'无可用 SPX 现金 1m K 线，价位暂不绘制到价格轴','quality'));
+  items.push(element('span',proxy?.reason??'缺少 SPX 现金指数 K 线及可用 SPY/SPXW 推算价，暂不绘制到价格轴','quality'));
   target.replaceChildren(...items);
-  target.title=`OpenD SPXW · GEX ${frame?.captureAt??frame?.collectedAt??'—'} · 到期 ${view.dates.join(', ')||'无'} · 原始 strike；CFD 与 SPX 未验证同时点映射`;
+  target.title=`OpenD SPXW · GEX ${frame?.captureAt??frame?.collectedAt??'—'} · 到期 ${view.dates.join(', ')||'无'} · 原始 strike；${proxy?.reason??'未取得可用的 SPX 推算价'}`;
 }
 
 function renderChart(view) {
@@ -232,16 +206,17 @@ function renderChart(view) {
   $('chart-title').textContent=`${state.symbol==='SPXW'?'SPX / SPXW GEX':state.symbol} ${label==='REF'?'REF ':''}${px(spot?.value)}  ${daily?`${daily.points>=0?'+':''}${px(daily.points)} (${daily.percent>=0?'+':''}${daily.percent.toFixed(2)}%)`:''}`;
   $('chart-title').title=`${spot?.source??spot?.label??'—'} · ${spot?.at??'—'} · 前收 ${frame?.previousCloseDate??'未核验'}`;
   $('chart-phase').textContent=`${replay?'Replay · ':''}${spot?.phase??'—'} / ${spot?.status??'REF'}`;
-  const tv=syncChartMode(frame);renderSpxLevels(view,frame,spot,tv);
-  if(tv){
-    $('chart-title').textContent='S&P 500 CFD 参考图 · FOREXCOM:SPXUSD';
-    $('tv-app-spot').textContent=`SPX Spot ${spot?.current?px(spot.value):'不可用'}`;
-    $('tv-app-spot').title=spot?.current?`${spot.source??'OpenD'} · ${spot.at??'—'}`:'应用未取得有效 SPX 现金指数报价；CFD 参考价只在 Widget 内';
-    const payload=state.source==='opend'?state.tempest[state.symbol]?.payload:null;
-    const cone=state.expectedProvider==='Tempest'?tempestExpected(payload,{symbol:state.symbol,at,horizon:state.expectedHorizon,spot,spotAsOf:spot?.at,sessionDate:frame?.sessionDate}):openDExpected(frame,{at,horizon:state.expectedHorizon});
-    $('tv-app-cone').textContent=cone.available?`App Live Cone ${px(cone.impliedLow1)}–${px(cone.impliedHigh1)}`:'App Live Cone 不可用';
-    $('tv-app-cone').title=cone.available?`${cone.provider} · ${cone.asOf} → ${cone.settleAt}`:(cone.reason??'应用行情或有效 IV 不可用');
-    return;
+  syncChartMode();
+  const nativeCash=state.symbol==='SPXW'&&hasSpxCashCandles(frame);
+  const spyPrice=replay?state.priceHistory.SPY:(state.priceHistory.SPY??state.prices.SPY);
+  const proxy=state.symbol==='SPXW'&&!nativeCash?spxProxy(spyPrice,historyFor('SPXW'),at):null;
+  renderSpxLevels(view,frame,spot,proxy);
+  $('chart-source').textContent=proxy?.available?'OpenD · SPX proxy':'OpenD · GEX 图';
+  $('chart-source').title=proxy?.available?'SPY 分钟 K 线 × 同交易日 SPXW 配对期权 REF / SPY 收盘价比例 · Estimated':'OpenD 期权 GEX 与价格';
+  if(proxy?.available){
+    $('chart-title').textContent=`SPX proxy ${px(proxy.bars.at(-1).c)} · SPXW GEX`;
+    $('chart-title').title=`${proxy.model} · ratio ${proxy.ratio.toFixed(6)} · SPXW REF ${px(proxy.refPrice)} / SPY ${px(proxy.spyPrice)} · ${proxy.refAt} · ${proxy.quality}${proxy.stale?' · stale':''}`;
+    $('chart-phase').textContent=`${replay?'Replay · ':''}Estimated / ${proxy.stale?'stale':'as of '+proxy.refAt}`;
   }
   $('cone').setAttribute('aria-pressed',state.cone);$('derived').setAttribute('aria-pressed',state.derived);
   for(const [id,key] of [['nodes','nodes'],['walls','walls'],['day-range','dayRange'],['two-sigma','twoSigma']])$(id).checked=!!state[key];
@@ -300,14 +275,14 @@ function renderChart(view) {
   $('derived').textContent=`Derived ${loadedSize}/${selectedSymbols().filter(s=>s==='SPY'&&state.symbol==='SPXW').length}`;
   const levels=[],annotations=[];
   if(finite(spot?.value))levels.push({price:spot.value,color:label==='Spot'?'#ce8d88':'#bfa56a',label});
-  if(view.peak)levels.push({price:view.peak.strike,color:'#d5b754',label:'★ King',style:1});
+  if(view.peak)levels.push({price:view.peak.strike,color:'#d5b754',label:'★ King',style:WALL_KING_LINE_STYLE});
   const wall=walls(view.shown,spot?.value??0);
   if(state.walls){
     if(wall.call&&wall.put&&wall.call.strike===wall.put.strike)
-      levels.push({price:wall.call.strike,color:'#a88eb8',label:'C/P Wall',style:2,
+      levels.push({price:wall.call.strike,color:'#a88eb8',label:'C/P Wall',style:WALL_KING_LINE_STYLE,
         detail:`Call Wall / Put Wall · ${px(wall.call.strike)} · Call ${cash(wall.call.call)} / Put ${cash(wall.put.put)}`});
-    else {if(wall.call)levels.push({price:wall.call.strike,color:'#55bace',label:'Call Wall',style:2});
-      if(wall.put)levels.push({price:wall.put.strike,color:'#d579b5',label:'Put Wall',style:3});}
+    else {if(wall.call)levels.push({price:wall.call.strike,color:'#55bace',label:'Call Wall',style:WALL_KING_LINE_STYLE});
+      if(wall.put)levels.push({price:wall.put.strike,color:'#d579b5',label:'Put Wall',style:WALL_KING_LINE_STYLE});}
   }
   const fixed=state.expectedProvider==='Tempest'?tempestDayRange(payload,{symbol:state.symbol,sessionDate:frame?.sessionDate,at}):fixedDayRange(frame,history,at,state.source==='opend'?state.fixedRanges:[]);
   if(fixed&&state.source==='opend'&&!state.fixedRanges.some(r=>r.symbol===fixed.symbol&&r.rangeDate===fixed.rangeDate&&r.modelVersion===fixed.modelVersion)){
@@ -325,12 +300,13 @@ function renderChart(view) {
     else mergedLevels.set(level.price,{...level});}
   const priceLevels=[...mergedLevels.values()];
   for(const level of priceLevels)level.title=level.detail??`${level.label} · ${px(level.price)} · sampled strikes ${view.strikes.length} · ${view.dates.join(', ')} · GEX ${frame?.captureAt??frame?.collectedAt??'—'}`;
-  const price=replay?(state.priceHistory[state.symbol]??frame?.price):latestPrice(frame,state.symbol);
+  const price=proxy?.available?proxy:replay?(state.priceHistory[state.symbol]??frame?.price):latestPrice(frame,state.symbol);
   const bars=price?.bars??frame?.bars??[],sourceMinutes=price?.barMinutes??5;
-  const chartHasPrice=state.symbol!=='SPXW'||hasSpxCashCandles(frame);
+  const chartHasPrice=state.symbol!=='SPXW'||nativeCash||!!proxy?.available;
   state.coneVisible=chartHasPrice?cone:null;
   if(!chartHasPrice)$('pin').disabled=true;
-  $('chart-empty').hidden=chartHasPrice;$('empty-tv').disabled=replay;
+  $('chart-empty').hidden=chartHasPrice;
+  $('chart-empty-reason').textContent=proxy?.reason??'OpenD 对 US..SPX 返回「暂不支持美股指数」。';
   state.heldStats=coneHeld(state.source==='opend'?state.fixedRanges:[],price?.dailyCloses??[],price?.sessions??{},at,state.symbol==='SPXW'?'SPX':state.symbol,{provider:state.expectedProvider,...(state.expectedProvider==='Tempest'?{modelVersion:'tempest-fixed-provider-v1'}:{})});
   state.supportedPeriods=[1,2,5,15].filter(v=>v>=sourceMinutes&&v%sourceMinutes===0);
   if(!state.supportedPeriods.includes(state.candleMinutes)&&state.supportedPeriods.length)state.candleMinutes=state.supportedPeriods[0];
@@ -350,8 +326,9 @@ function renderChart(view) {
     {low:fixed.impliedLow1,high:fixed.impliedHigh1}:null;
   chart.update({symbol:state.symbol,bars:chartHasPrice?bars:[],minutes:state.candleMinutes,sourceMinutes,at,nodes:chartHasPrice?nodes:[],cone:chartHasPrice&&cone?{...cone,sigmas:state.twoSigma?[1,2]:[1]}:null,
     focusRange:chartHasPrice?focusRange:null,
-    levels:chartHasPrice?priceLevels:[],spot:chartHasPrice?spot:null,replay,session:state.chartSession,annotations:chartHasPrice?annotations:[],nodeScale:{min:state.nodeMin,max:state.nodeMax,alphaMin:state.nodeAlphaMin,alphaMax:state.nodeAlphaMax},drawingsVisible:state.drawingsVisible,autoScale:state.chartAutoScale,candleStyle:state.candleStyle});
-  if(state.symbol==='SPXW'&&!chartHasPrice)messages.push('SPX 现金指数 1m K 线不可用（OpenD：暂不支持美股指数）；原始 SPXW Levels 单列，REF 不是真实指数 Spot');
+    levels:chartHasPrice?priceLevels:[],spot:chartHasPrice?(proxy?.available?{value:bars.at(-1)?.c}:spot):null,replay,session:state.chartSession,annotations:chartHasPrice?annotations:[],nodeScale:{min:state.nodeMin,max:state.nodeMax,alphaMin:state.nodeAlphaMin,alphaMax:state.nodeAlphaMax},drawingsVisible:state.drawingsVisible,autoScale:state.chartAutoScale,candleStyle:state.candleStyle});
+  if(proxy?.available)messages.push(`SPX proxy · SPY K 线 × ${proxy.ratio.toFixed(6)} · SPXW 配对期权 REF ${proxy.refAt} · ${proxy.quality}${proxy.stale?' · stale':''} · 本地近似，非现金指数报价`);
+  if(state.symbol==='SPXW'&&!chartHasPrice)messages.push(`SPX 自绘图不可用：${proxy?.reason??'SPX 现金指数与同步推算价均不可用'}；SPXW 原始 Levels 单列`);
   if(frame?.historyUnavailable)messages.push('历史 GEX 不可用：该时点之前没有期权快照');
   if(state.dayRange&&!range)messages.push('Day Range 不可用：缺少前收时可验证的 ATM IV 快照');
   if(state.cone&&!cone)messages.push(state.coneReason);
@@ -777,9 +754,9 @@ async function refreshPrice(){
   clearTimeout(priceTimer);const generation=++priceGeneration;
   if(state.source!=='opend'){priceTimer=setTimeout(refreshPrice,15000);return;}
   let collecting=false;
-  try{await Promise.all(selectedSymbols().map(async symbol=>{
+  try{await Promise.all(priceSymbols().map(async symbol=>{
     try{const price=await requestJson('price',symbol,AbortSignal.timeout(90000));
-      if(generation===priceGeneration&&selectedSymbols().includes(symbol)&&state.source==='opend'){
+      if(generation===priceGeneration&&priceSymbols().includes(symbol)&&state.source==='opend'){
         state.priceStatus[symbol]=price.service??{};
         if(price.status==='loading'||price.service?.phase==='collecting')collecting=true;
         if(price.status!=='loading')mergePrice(symbol,price);
@@ -807,7 +784,7 @@ async function loadReplayDay(at){
   state.replayDateOrder=[...state.replayDateOrder.filter(d=>d!==day),day].slice(-2);
   for(const key of Object.keys(state.replayHistories))if(!state.replayDateOrder.includes(key.split('|').at(-1)))delete state.replayHistories[key];
   const pending=state.replayPending;
-  await Promise.all(selectedSymbols().map(async symbol=>{
+  await Promise.all(priceSymbols().map(async symbol=>{
     const key=`${symbol}|${day}`,bounds=state.replayWindowBounds[key];
     if(bounds&&at>=bounds.start&&at<=bounds.end||pending.has(key))return;
     pending.add(key);const from=new Date(bounds&&at>bounds.end?bounds.end-40*60000:at-10*3600000).toISOString(),to=new Date(at).toISOString();
@@ -831,7 +808,7 @@ $('replay-step').onclick=()=>{clock.pause();clock.step();};
 $('replay-speed').onchange=event=>{clock.speed=Number(event.target.value);};
 async function start(){
   render();void refresh();void refreshPrice();
-  setTimeout(()=>{for(const symbol of [state.symbol,...selectedSymbols().filter(s=>s!==state.symbol)])void hydrate(symbol);},1200);
+  setTimeout(()=>{for(const symbol of [state.symbol,...priceSymbols().filter(s=>s!==state.symbol)])void hydrate(symbol);},1200);
 }
 $('range').value=String(state.limit);$('speed').value=String(state.speed);
 new DarkSelect($('range'),'Strikes');new DarkSelect($('speed'),'GEX Velocity');

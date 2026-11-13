@@ -13,7 +13,7 @@ The official Lightweight Charts 5.2.1 bundle and its license are in `web/vendor`
 ## Data boundaries
 
 - SPXW options use OpenD's SPXW chain. The option-implied forward is labeled **REF** and is not treated as the SPX cash index.
-- This OpenD account currently returns `暂不支持美股指数` for SPX cash snapshots and 1-minute bars. In Live mode, SPXW therefore opens the official TradingView `FOREXCOM:SPXUSD` CFD reference widget by default. The SPXW GEX price levels remain listed separately, without unverified CFD mapping. SPY and other symbols with supported prices use the self-drawn GEX chart.
+- This OpenD account currently returns `暂不支持美股指数` for SPX cash snapshots and 1-minute bars. The SPXW panel uses the same self-drawn chart as SPY and QQQ. When cash bars are unavailable, it scales OpenD SPY minute OHLC by a same-day ratio of an observed SPXW paired-option REF to the nearest closed SPY minute close. The chart is labeled **SPX proxy / Estimated** and keeps SPXW GEX at its original strikes. This is an approximate visualization, not a cash-index quote or a verified accuracy guarantee. If no synchronized pair exists, the chart shows the reason and lists raw SPXW levels separately.
 - A valid authorized SPX cash price provider can be connected through `providers.py`; the existing self-drawn chart then uses native SPXW strikes on the SPX price axis.
 - Day Range and Live Cone require valid, time-matched cash prices and option IV. Missing inputs are shown as unavailable. Replay excludes data after its cursor.
 - `Export gex levels` beside Refresh opens a copyable `GEX snapshot` CSV row for the focused symbol. It uses the selected heatmap's Put Wall, Call Wall and King, plus the fixed prior-close Day Range ±1σ prices. If any field or the New York date is missing, copying is disabled so an old range cannot be pasted as today's level.
@@ -30,4 +30,5 @@ node tests/browser.mjs --spx-cash
 node tests/browser.mjs --live --focus-switch
 ```
 
-The `--spx-cash` browser check uses a clearly labeled synthetic cash index fixture to verify the self-drawn SPXW chart path. It does not establish that live SPX cash bars are available. The `--live` check uses your running local OpenD board.
+The `--spx-cash` browser check uses a clearly labeled synthetic cash index fixture to verify the native cash path. The `--focus-switch` check covers the SPY → SPXW → SPY self-drawn proxy path. Neither fixture establishes that live SPX cash bars are available. The `--live` check uses your running local OpenD board.
+

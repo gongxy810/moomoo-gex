@@ -23,7 +23,6 @@ const exportLive=process.argv.includes('--export-live');
 const matrixOnly=process.argv.includes('--matrix');
 const rangeOnly=process.argv.includes('--range');
 const axisOnly=process.argv.includes('--axis');
-const tvOnly=process.argv.includes('--tv');
 const focusSwitch=process.argv.includes('--focus-switch');
 const design=process.argv.includes('--design');
 const compareOnly=process.argv.includes('--compare');
@@ -49,7 +48,9 @@ function frame(symbol,index=41){
     code:`US.${symbol}${cell.expiry.slice(2).replaceAll('-','')}${side==='call'?'C':'P'}${cell.strike*1000}`,side,strike:cell.strike,expiry:cell.expiry,optionRoot:symbol,
     bid:2,ask:2.1,ivRaw:cell[side+'Iv']*100,iv:cell[side+'Iv'],ivUnit:'fraction',at:base.collectedAt,source:'TEST FIXTURE'
   }]))}));
-  const quote={...base.spot,at:base.collectedAt,current:cash,comparable:cash,phase:'RTH',status:cash?'RTH':'REF',source:'TEST FIXTURE',estimated:!cash};
+  const quote={...base.spot,at:base.collectedAt,current:cash,comparable:true,phase:'RTH',status:cash?'RTH':'REF',
+    source:cash?'TEST FIXTURE':'SPXW call/put mids · K+C−P (rate omitted)',estimated:!cash,
+    ...(symbol==='SPXW'&&!cash?{referenceExpiry:'2026-11-09'}:{})};
   return {...base,symbol,source:'opend',model:'test-v1',optionRoot:symbol,previousCloseDate:'2026-11-06',
     sessionClose:'2026-11-09T21:00:00Z',previousSession:'2026-11-06',previousSessionClose:'2026-11-06T21:00:00Z',
     collectedAt:new Date(Date.parse(base.collectedAt)+sequence*1000).toISOString(),spot:quote,bars:cash?bars:[],
@@ -95,7 +96,7 @@ const server=createServer(async(req,res)=>{
     const types={'.js':'text/javascript','.css':'text/css','.html':'text/html'};
     let data=design&&process.argv.includes('--before')&&designData.assets[path.slice(1)]?Buffer.from(designData.assets[path.slice(1)]):await readFile(resolve('web','.'+path));
     if(design&&process.argv.includes('--before')&&path==='/chart.js')data=Buffer.from(data.toString()+'\nPriceChart.prototype.setControlZones=function(){};\n');
-    if((design||corner||derivedOnly||rangeOnly||cashOnly||axisOnly)&&path==='/app.js')data=Buffer.from(data.toString().replace("const chart=new PriceChart($('plot'));","const chart=new PriceChart($('plot'));globalThis.__designChart=chart;globalThis.__testState=state;globalThis.__testRender=()=>render();"));
+    if((design||corner||derivedOnly||rangeOnly||cashOnly||axisOnly||focusSwitch)&&path==='/app.js')data=Buffer.from(data.toString().replace("const chart=new PriceChart($('plot'));","const chart=new PriceChart($('plot'));globalThis.__designChart=chart;globalThis.__testState=state;globalThis.__testRender=()=>render();"));
     if(design&&process.argv.includes('--before')&&path==='/index.html')data=Buffer.from(data.toString().replace('<option>20</option><option>30</option><option selected>40</option><option>50</option><option>60</option>','<option>20</option><option selected>39</option><option>60</option>'));
     if(design&&compareOnly&&path==='/index.html')data=Buffer.from(data.toString().replace('</head>','<style>#plot{width:690px!important;height:480px!important;min-height:480px!important;max-height:480px!important;flex:none!important}</style></head>'));
     if(path==='/app.js')data=Buffer.from(data.toString().replace("const relay = 'http://127.0.0.1:8766';","const relay = location.origin;"));
@@ -129,7 +130,7 @@ try{
   await send('Runtime.enable');await send('Page.enable');await send('Network.enable');
   if(!live)await send('Page.addScriptToEvaluateOnNewDocument',{source:design?`Date.now=()=>${designData.at};`:"Date.now=()=>Date.parse('2026-11-09T18:01:00Z');"});
   await send('Page.navigate',{url:live?'http://127.0.0.1:8766/':`http://127.0.0.1:${server.address().port}`});
-  await until("document.querySelectorAll('.ladder').length===3 && document.querySelectorAll('#plot canvas').length>0 && document.querySelector('#feed-state').textContent!=='Refreshing'");
+  await until("document.querySelectorAll('.ladder').length===3 && document.querySelectorAll('#plot canvas').length>0 && ("+(live?"true":"document.querySelector('#feed-state').textContent!=='Refreshing'")+")");
   if(cashOnly){
     await until("document.querySelector('.chart-panel').dataset.activeSymbol==='SPXW' && document.querySelector('.chart-panel').dataset.chartMode==='gex' && +document.querySelector('#plot').dataset.candles>0");
     await evaluate("document.querySelector('#derived').click();document.querySelector('#candle-period').value='1';document.querySelector('#candle-period').dispatchEvent(new Event('change'))");
@@ -170,59 +171,33 @@ try{
   }
   else if(focusSwitch){
     const before=process.argv.includes('--before'),tag=before?'before':'after';
-    const stateOf=()=>evaluate("(()=>{const p=document.querySelector('.chart-panel'),mode=document.querySelector('#chart-mode-switch'),title=document.querySelector('#chart-title');return {activeSymbol:p.dataset.activeSymbol??document.querySelector('#symbols button[aria-pressed=true]')?.dataset.symbol,chartMode:p.dataset.chartMode,candles:Number(document.querySelector('#plot').dataset.candles??0),iframe:document.querySelector('#tv-widget iframe')?.src??null,iframeVisible:!document.querySelector('#tv-panel').hidden,modeButtonVisible:getComputedStyle(mode).display!=='none',modeButtonDistance:Math.round(mode.getBoundingClientRect().left-title.getBoundingClientRect().right),replayCursor:document.querySelector('#plot').dataset.cursor,title:title.textContent,levels:document.querySelector('#spx-levels').hidden?'':document.querySelector('#spx-levels').textContent,message:document.querySelector('#chart-message').textContent,leftQuote:document.querySelector('[data-ladder=left] .header-spot').textContent,leftMarker:document.querySelector('[data-ladder=left] .spot-marker span')?.textContent}})()");
+    const stateOf=()=>evaluate("(()=>{const p=document.querySelector('.chart-panel'),plot=document.querySelector('#plot');return {activeSymbol:p.dataset.activeSymbol,chartMode:p.dataset.chartMode,candles:Number(plot.dataset.candles??0),nodes:Number(plot.dataset.nodeAuditCount??0),iframe:document.querySelector('#tv-widget iframe')?.src??null,replayCursor:plot.dataset.cursor,title:document.querySelector('#chart-title').textContent,source:document.querySelector('#chart-source').textContent,levels:document.querySelector('#spx-levels').hidden?'':document.querySelector('#spx-levels').textContent,message:document.querySelector('#chart-message').textContent,leftQuote:document.querySelector('[data-ladder=left] .header-spot').textContent}})()");
     const snap=async name=>{const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,`focus-${tag}-${name}.png`),Buffer.from(shot.data,'base64'));};
     await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click()");await wait(350);
     const spyStart=await stateOf();await snap('spy-start');
     await evaluate("document.querySelector('#symbols button[data-symbol=SPXW]').click()");
-    if(!before)await until("document.querySelector('.chart-panel').dataset.chartMode==='tradingview' && !!document.querySelector('#tv-widget iframe')");
-    await wait(before?400:2500);const spxButton=await stateOf();await snap('spx-button');
+    if(!before)await until("document.querySelector('.chart-panel').dataset.activeSymbol==='SPXW' && +document.querySelector('#plot').dataset.candles>0");
+    await wait(350);const spxButton=await stateOf();await snap('spx-button');
     await evaluate("document.querySelector('[data-ladder=middle] .focus-column').click()");await wait(350);
     const spyReturn=await stateOf();await snap('spy-return');
     await evaluate("document.querySelector('[data-ladder=left] .focus-column').click()");
-    if(!before)await until("document.querySelector('.chart-panel').dataset.chartMode==='tradingview' && !!document.querySelector('#tv-widget iframe')");
+    if(!before)await until("document.querySelector('.chart-panel').dataset.activeSymbol==='SPXW' && +document.querySelector('#plot').dataset.candles>0");
     await wait(350);const spxFocus=await stateOf();await snap('spx-focus');
-    let replayCheck=null,manualCheck=null;
-    if(!before){
-      await evaluate("document.querySelector('[data-ladder=middle] .focus-column').click();document.querySelector('#replay-date').value='2026-11-10';document.querySelector('#replay-time').value='13:07';document.querySelector('#replay-form').requestSubmit()");
+    let replayCheck=null;
+    if(!before&&!live){
+      await evaluate("document.querySelector('[data-ladder=middle] .focus-column').click();__testState.replayCursor=Date.parse('2026-11-09T18:07:00Z');__testRender()");
       await until("document.querySelector('#plot').dataset.cursor!=='live' && document.querySelector('.chart-panel').dataset.activeSymbol==='SPY'");
       const spyReplay=await stateOf();
       await evaluate("document.querySelector('[data-ladder=left] .focus-column').click()");await wait(350);
       const spxReplay=await stateOf();
-      await evaluate("document.querySelector('#latest').click()");await until("document.querySelector('.chart-panel').dataset.chartMode==='tradingview'");
+      await evaluate("__testState.replayCursor=null;document.querySelector('#latest').click();__testRender()");await until("document.querySelector('#plot').dataset.cursor==='live'");
       replayCheck={spyReplay,spxReplay,afterExit:await stateOf()};
-      await evaluate("document.querySelector('#mode-gex').click()");const manualGex=await stateOf();await snap('spx-manual-gex');
-      await evaluate("document.querySelector('[data-ladder=middle] .focus-column').click();document.querySelector('[data-ladder=left] .focus-column').click()");
-      manualCheck={manualGex,afterRoundtrip:await stateOf()};
     }
-    const report={address:live?'http://127.0.0.1:8766/':`http://127.0.0.1:${server.address().port}/`,spyStart,spxButton,spyReturn,spxFocus,replayCheck,manualCheck,exceptions};
+    const report={address:live?'http://127.0.0.1:8766/':`http://127.0.0.1:${server.address().port}/`,spyStart,spxButton,spyReturn,spxFocus,replayCheck,exceptions};
     await writeFile(resolve(artifacts,`focus-${tag}.json`),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
-    if(!before){assert.equal(spyStart.activeSymbol,'SPY');assert.equal(spyStart.chartMode,'gex');assert.equal(spxButton.activeSymbol,'SPXW');assert.equal(spxButton.chartMode,'tradingview');assert.ok(spxButton.iframeVisible&&spxButton.iframe?.includes('FOREXCOM'));assert.equal(spyReturn.activeSymbol,'SPY');assert.equal(spyReturn.chartMode,'gex');assert.equal(spxFocus.activeSymbol,'SPXW');assert.equal(spxFocus.chartMode,'tradingview');assert.ok(spxFocus.modeButtonVisible&&spxFocus.modeButtonDistance<80);
-      assert.equal(replayCheck.spyReplay.chartMode,'gex');assert.equal(replayCheck.spxReplay.chartMode,'gex');assert.equal(replayCheck.spyReplay.replayCursor,replayCheck.spxReplay.replayCursor);assert.equal(replayCheck.afterExit.chartMode,'tradingview');
-      assert.equal(manualCheck.manualGex.chartMode,'gex');assert.equal(manualCheck.manualGex.candles,0);assert.ok(manualCheck.manualGex.message.includes('暂不支持美股指数'));assert.equal(manualCheck.afterRoundtrip.chartMode,'gex');
-      assert.ok(spxButton.levels.includes('King')&&spxButton.levels.includes('REF'));assert.ok(spxButton.leftQuote.startsWith('REF ')&&spxButton.leftMarker.startsWith('REF '));assert.deepEqual(exceptions,[]);}
-  }
-  else if(tvOnly){
-    await evaluate("document.querySelector('#mode-tv').click()");
-    await wait(18000);
-    const active=await evaluate("(()=>({mode:document.querySelector('.chart-panel').dataset.chartMode,source:document.querySelector('#chart-source').textContent,title:document.querySelector('#chart-title').textContent,spot:document.querySelector('#tv-app-spot').textContent,cone:document.querySelector('#tv-app-cone').textContent,status:document.querySelector('#tv-status').textContent,statusState:document.querySelector('#tv-status').dataset.state??'',iframe:document.querySelector('#tv-widget iframe')?.src??null,script:document.querySelector('#tv-widget script')?.src,minute:document.querySelector('#tv-widget script')?.dataset.interval,gexControlsVisible:getComputedStyle(document.querySelector('.layer-controls')).display!=='none',replayVisible:getComputedStyle(document.querySelector('.replay')).display!=='none',openLink:document.querySelector('#tv-open').href}))()");
-    const captureStem=process.argv.includes('--open-check')?'tv-open':`tv-${live?'live':'fixture'}`,observing=process.argv.includes('--observe');
-    const startFile=`${captureStem}${observing?'-observe-start':''}.png`;
-    const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,startFile),Buffer.from(shot.data,'base64'));
-    let observation=null;
-    if(observing){
-      const startedAt=new Date().toISOString();await wait(70000);
-      const endFile=`${captureStem}-observe-end.png`;
-      const later=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,endFile),Buffer.from(later.data,'base64'));
-      observation={startedAt,finishedAt:new Date().toISOString(),screenshots:[startFile,endFile]};
-    }
-    await evaluate("document.querySelector('#mode-gex').click()");await wait(300);
-    const restored=await evaluate("({mode:document.querySelector('.chart-panel').dataset.chartMode,canvas:document.querySelectorAll('#plot canvas').length,replayVisible:getComputedStyle(document.querySelector('.replay')).display!=='none'})");
-    console.log('tv-browser-state',JSON.stringify(active));
-    assert.equal(active.mode,'tradingview');assert.equal(active.title,'S&P 500 CFD 参考图 · FOREXCOM:SPXUSD');assert.equal(active.source,'TradingView · FOREXCOM:SPXUSD');assert.ok(decodeURIComponent(active.iframe??'').includes('"interval":"1"'));assert.ok(decodeURIComponent(active.iframe??'').includes('"symbol":"FOREXCOM:SPXUSD"'));assert.equal(active.gexControlsVisible,false);assert.equal(active.replayVisible,false);
-    assert.equal(restored.mode,'gex');assert.ok(restored.canvas>0&&restored.replayVisible);
-    const report={active,restored,observation,tvNetwork:tvNetwork.slice(0,30),exceptions,checkedAt:new Date().toISOString()};
-    await writeFile(resolve(artifacts,`${captureStem}${observing?'-observe':''}.json`),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+    if(!before){assert.equal(spyStart.activeSymbol,'SPY');assert.equal(spyStart.chartMode,'gex');assert.equal(spxButton.activeSymbol,'SPXW');assert.equal(spxButton.chartMode,'gex');assert.ok(spxButton.candles>0&&spxButton.title.includes('SPX proxy'));if(!live)assert.ok(spxButton.nodes>0);assert.equal(spxButton.iframe,null);assert.equal(spyReturn.activeSymbol,'SPY');assert.equal(spyReturn.chartMode,'gex');assert.equal(spxFocus.activeSymbol,'SPXW');assert.ok(spxFocus.candles>0);
+      if(replayCheck){assert.equal(replayCheck.spyReplay.chartMode,'gex');assert.equal(replayCheck.spxReplay.chartMode,'gex');assert.equal(replayCheck.spyReplay.replayCursor,replayCheck.spxReplay.replayCursor);assert.equal(replayCheck.afterExit.chartMode,'gex');}
+      assert.ok(spxButton.leftQuote.startsWith('REF '));assert.equal(tvNetwork.length,0);assert.deepEqual(exceptions,[]);}
   }
   else if(compareOnly){
     await evaluate("document.querySelector('[data-ladder=middle] .focus-column').click()");
