@@ -24,7 +24,10 @@ export function nodeGeometry(nodes,x,y,spacing,scale){
     const h=shape==='diamond'?idealHeight:Math.min(idealHeight,Math.max(2,w*.95));
     const alphaMin=finite(scale.alphaMin)?scale.alphaMin:NODE_STYLE.alphaMin;
     const alphaMax=finite(scale.alphaMax)?scale.alphaMax:NODE_STYLE.alphaMin+NODE_STYLE.alphaRange;
-    const alpha=(s>=.999?Math.min(.95,alphaMax+.07):alphaMin+(alphaMax-alphaMin)*power)*Math.min(1,Math.max(.35,spacing/4));
+    const spacingFactor=Math.min(1,Math.max(.35,spacing/4));
+    const baseAlpha=s>=.999?Math.min(.95,alphaMax+.07):alphaMin+(alphaMax-alphaMin)*power;
+    // Preserve the +20 percentage-point lift even when distant zoom dims nodes.
+    const alpha=Math.min(.95,baseAlpha*spacingFactor+.20*(1-spacingFactor));
     const color=n.value>=0?NODE_STYLE.positive:NODE_STYLE.negative;
     const gx=Math.floor(n.x/8),gy=Math.floor(n.y/8);let hit;
     for(let dx=-1;dx<=1&&!hit;dx++)for(let dy=-1;dy<=1&&!hit;dy++)

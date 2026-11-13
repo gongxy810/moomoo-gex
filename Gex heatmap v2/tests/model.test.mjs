@@ -69,6 +69,9 @@ test('board node opacity rises by twenty points without changing node geometry',
   const after=geometry({min:2,max:8,alphaMin:.30,alphaMax:.85});
   assert.ok(Math.abs(after.alpha-before.alpha-.20)<1e-10);
   assert.equal(after.w,before.w);assert.equal(after.h,before.h);
+  const oldZoomAlpha=(.10+(.65-.10)*Math.pow(.5,.75));
+  const far=nodeGeometry([node],t=>t*10,p=>p,2,{min:2,max:8,alphaMin:.30,alphaMax:.85})[0];
+  assert.ok(Math.abs(far.alpha-oldZoomAlpha*.5-.20)<1e-10);
 });
 test('node strength uses the complete source strike set and preserves shape through sign flips',()=>{
   const cells=[{expiry:'d',strike:100,call:20,put:0},{expiry:'d',strike:101,call:80,put:0},
