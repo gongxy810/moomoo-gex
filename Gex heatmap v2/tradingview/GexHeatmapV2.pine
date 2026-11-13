@@ -5,6 +5,7 @@ indicator("Gex heatmap v2 · OpenD history", overlay = true, behind_chart = true
 // Pine cannot read the local OpenD service. Re-paste after a new capture.
 string snapshot = input.text_area("", "Snapshot input (GEX3)", group = "Board data")
 bool showBubbles = input.bool(true, "Historical GEX bubbles", group = "Display")
+string bubbleVisibility = input.string("Balanced", "Bubble visibility", options = ["Compact", "Balanced", "Bold"], group = "Display")
 bool showRange = input.bool(true, "Fixed Day Expected Range", group = "Display")
 bool showTwoSigma = input.bool(true, "Day ±2σ", group = "Display")
 bool showSummary = input.bool(true, "Snapshot summary", group = "Display")
@@ -18,6 +19,9 @@ color bothWall = #A88EB8
 color rangeBlue = #699BD0
 color panel = #141319
 color quiet = #A9A3B2
+bool lightChart = (color.r(chart.bg_color) + color.g(chart.bg_color) + color.b(chart.bg_color)) / 3 > 128
+color positiveMark = lightChart ? #9A6500 : gold
+color negativeMark = lightChart ? #6B20AE : purple
 
 var string sourceSymbol = ""
 var string sourceDate = ""
@@ -193,13 +197,14 @@ if barstate.islast or barstate.islastconfirmedhistory
                 if nodeTime >= firstMatchTime and nodeTime <= rightTime and nodeTime >= chart.left_visible_bar_time and nodeTime <= chart.right_visible_bar_time
                     seenVisible += 1
                     if seenVisible > skippedVisible
-                        color nodeTone = value >= 0 ? gold : purple
-                        int fade = int(math.round(92 - 0.45 * percent))
+                        color nodeTone = value >= 0 ? positiveMark : negativeMark
+                        int fade = int(math.round((bubbleVisibility == "Bold" ? 52 : bubbleVisibility == "Compact" ? 80 : 70) - (bubbleVisibility == "Bold" ? 0.42 : bubbleVisibility == "Compact" ? 0.50 : 0.60) * percent))
                         bool derived = array.get(nodeShapes, i) == "D"
-                        string mark = derived ? (percent >= 70 ? "◆" : "◇") : (percent >= 70 ? "●" : percent >= 30 ? "•" : "·")
+                        string mark = derived ? (bubbleVisibility == "Compact" and percent < 30 ? "◇" : "◆") : (bubbleVisibility == "Compact" and percent < 30 ? "·" : percent < 30 and bubbleVisibility != "Bold" ? "•" : "●")
+                        string markSize = bubbleVisibility == "Bold" or bubbleVisibility == "Balanced" and percent >= 60 ? size.small : size.tiny
                         int capturedNode = array.get(nodeCaptureTimes, i)
                         string details = (derived ? "Derived " : "Native ") + array.get(nodeSources, i) + " GEX\nStrike " + str.tostring(strike, format.mintick) + "\nMapped price " + str.tostring(mapped, format.mintick) + "\nGEX " + str.tostring(value, "#.####") + "\nKing GEX " + str.tostring(array.get(nodeKings, i), "#.####") + "\n" + str.tostring(percent, "#.##") + "% King\nCaptured " + (capturedNode == 0 ? capturedAt : str.format_time(capturedNode, "yyyy-MM-dd HH:mm:ss", "America/New_York")) + " ET\nExpiry " + expiries
-                        label bubble = label.new(nodeTime, mapped, mark, xloc = xloc.bar_time, yloc = yloc.price, color = color.new(nodeTone, 100), style = label.style_none, textcolor = color.new(nodeTone, fade), size = size.tiny, tooltip = details, force_overlay = true)
+                        label bubble = label.new(nodeTime, mapped, mark, xloc = xloc.bar_time, yloc = yloc.price, color = color.new(nodeTone, 100), style = label.style_none, textcolor = color.new(nodeTone, fade), size = markSize, tooltip = details, force_overlay = true)
                         array.push(drawnLabels, bubble)
                         drawnNodeCount += 1
 
