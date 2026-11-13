@@ -22,6 +22,7 @@ const cashOnly=process.argv.includes('--spx-cash');
 const exportLive=process.argv.includes('--export-live');
 const matrixOnly=process.argv.includes('--matrix');
 const rangeOnly=process.argv.includes('--range');
+const axisOnly=process.argv.includes('--axis');
 const tvOnly=process.argv.includes('--tv');
 const focusSwitch=process.argv.includes('--focus-switch');
 const design=process.argv.includes('--design');
@@ -94,7 +95,7 @@ const server=createServer(async(req,res)=>{
     const types={'.js':'text/javascript','.css':'text/css','.html':'text/html'};
     let data=design&&process.argv.includes('--before')&&designData.assets[path.slice(1)]?Buffer.from(designData.assets[path.slice(1)]):await readFile(resolve('web','.'+path));
     if(design&&process.argv.includes('--before')&&path==='/chart.js')data=Buffer.from(data.toString()+'\nPriceChart.prototype.setControlZones=function(){};\n');
-    if((design||corner||derivedOnly||rangeOnly||cashOnly)&&path==='/app.js')data=Buffer.from(data.toString().replace("const chart=new PriceChart($('plot'));","const chart=new PriceChart($('plot'));globalThis.__designChart=chart;globalThis.__testState=state;globalThis.__testRender=()=>render();"));
+    if((design||corner||derivedOnly||rangeOnly||cashOnly||axisOnly)&&path==='/app.js')data=Buffer.from(data.toString().replace("const chart=new PriceChart($('plot'));","const chart=new PriceChart($('plot'));globalThis.__designChart=chart;globalThis.__testState=state;globalThis.__testRender=()=>render();"));
     if(design&&process.argv.includes('--before')&&path==='/index.html')data=Buffer.from(data.toString().replace('<option>20</option><option>30</option><option selected>40</option><option>50</option><option>60</option>','<option>20</option><option selected>39</option><option>60</option>'));
     if(design&&compareOnly&&path==='/index.html')data=Buffer.from(data.toString().replace('</head>','<style>#plot{width:690px!important;height:480px!important;min-height:480px!important;max-height:480px!important;flex:none!important}</style></head>'));
     if(path==='/app.js')data=Buffer.from(data.toString().replace("const relay = 'http://127.0.0.1:8766';","const relay = location.origin;"));
@@ -237,6 +238,34 @@ try{
     await writeFile(resolve(artifacts,`compare-${name}.json`),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
   }
   else if(corner){await runCorner({send,evaluate,until,wait,artifacts,before:process.argv.includes('--before'),live});assert.deepEqual(exceptions,[]);}
+  else if(axisOnly){
+    await evaluate("document.querySelector('[data-ladder=middle] .focus-column').click()");
+    await until("document.querySelector('.chart-panel').dataset.activeSymbol==='SPY' && +document.querySelector('#plot').dataset.candles>0");
+    await wait(250);
+    const coords=await evaluate("(()=>{const r=document.querySelector('#plot').getBoundingClientRect(),p=__designChart.chart.paneSize();return {axis:{x:r.x+p.width+12,y:r.y+p.height*.4},pane:{x:r.x+p.width*.25,y:r.y+p.height*.4}}})()");
+    const state=()=>evaluate("({range:__designChart.chart.priceScale('right').getVisibleRange(),auto:__designChart.chart.priceScale('right').options().autoScale,prefAuto:__testState.chartAutoScale,time:__designChart.chart.timeScale().getVisibleLogicalRange()})");
+    const before=await state();
+    await send('Input.dispatchMouseEvent',{type:'mouseWheel',x:coords.axis.x,y:coords.axis.y,deltaX:0,deltaY:-450});await wait(180);
+    const wheel=await state();
+    const drag=async(point,dx,dy)=>{await send('Input.dispatchMouseEvent',{type:'mousePressed',x:point.x,y:point.y,button:'left',buttons:1,clickCount:1});for(let i=1;i<=4;i++)await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:point.x+dx*i/4,y:point.y+dy*i/4,button:'left',buttons:1});await send('Input.dispatchMouseEvent',{type:'mouseReleased',x:point.x+dx,y:point.y+dy,button:'left',buttons:0,clickCount:1});await wait(180);};
+    await drag(coords.pane,0,-80);const pane=await state();
+    await drag(coords.axis,0,80);const axis=await state();
+    await drag(coords.pane,-80,0);const horizontal=await state();
+    await evaluate('__testRender()');const refreshed=await state();
+    for(const clickCount of [1,2]){await send('Input.dispatchMouseEvent',{type:'mousePressed',x:coords.axis.x,y:coords.axis.y,button:'left',buttons:1,clickCount});await send('Input.dispatchMouseEvent',{type:'mouseReleased',x:coords.axis.x,y:coords.axis.y,button:'left',buttons:0,clickCount});}
+    await wait(120);const reset=await state();
+    const span=value=>value.range.to-value.range.from;
+    assert.ok(span(wheel)<span(before)&&!wheel.auto&&!wheel.prefAuto);
+    assert.deepEqual(wheel.time,before.time);
+    assert.ok(pane.range.from<wheel.range.from&&Math.abs(span(pane)-span(wheel))<.001);
+    assert.deepEqual(pane.time,wheel.time);
+    assert.ok(Math.abs(span(axis)-span(pane))>.01);
+    assert.ok(Math.abs(horizontal.time.from-axis.time.from)>1);
+    assert.ok(Math.abs(span(refreshed)-span(horizontal))<.001&&!refreshed.auto);
+    assert.ok(reset.auto&&reset.prefAuto);
+    assert.deepEqual(exceptions,[]);
+    console.log(JSON.stringify({coords,before,wheel,pane,axis,horizontal,refreshed,reset,exceptions}));
+  }
   else if(rangeOnly){
     await evaluate("document.querySelector('[data-ladder=middle] .focus-column').click()");
     await until("__testState.prices.SPY?.spot&&__testState.frames.at(-1)?.SPY");

@@ -162,6 +162,51 @@ export class PriceChart {
       clearTimeout(this.historyTimer);
       this.historyTimer=setTimeout(()=>this.onNeedHistory(Number(range.from)*1000,Number(range.to)*1000),120);
     });
+    this.installPriceGestures(target);
+  }
+  installPriceGestures(target){
+    const scale=this.chart.priceScale('right');
+    const excluded=event=>event.target.closest?.('.chart-tools,.corner-cone,.drawing-tools,.export-status');
+    target.addEventListener('wheel',event=>{
+      if(excluded(event)||this.drawingMode||this.editing)return;
+      const rect=target.getBoundingClientRect(),pane=this.chart.paneSize();
+      const x=event.clientX-rect.left,y=event.clientY-rect.top;
+      if(x<pane.width||x>pane.width+scale.width()||y<0||y>pane.height)return;
+      const range=scale.getVisibleRange(),at=this.anchor.coordinateToPrice(y);
+      if(!range||!finite(at)||range.to<=range.from)return;
+      event.preventDefault();event.stopImmediatePropagation();
+      const factor=Math.exp(Math.max(-600,Math.min(600,event.deltaY))*.0012);
+      const span=Math.max(.0001,(range.to-range.from)*factor),fraction=(at-range.from)/(range.to-range.from);
+      scale.setAutoScale(false);scale.setVisibleRange({from:at-fraction*span,to:at+(1-fraction)*span});
+      this.onManualScale?.();
+    },{capture:true,passive:false});
+    let pan=null;
+    target.addEventListener('mousedown',event=>{
+      if(event.button!==0||excluded(event)||this.drawingMode||this.editing)return;
+      const rect=target.getBoundingClientRect(),pane=this.chart.paneSize();
+      const x=event.clientX-rect.left,y=event.clientY-rect.top,range=scale.getVisibleRange();
+      if(x<0||x>=pane.width||y<0||y>=pane.height||!range)return;
+      pan={x:event.clientX,y:event.clientY,range,height:pane.height,active:false};
+    },true);
+    const move=event=>{
+      if(!pan||this.drawingMode||this.editing)return;
+      if('buttons' in event&&!(event.buttons&1)){pan=null;return;}
+      const dx=event.clientX-pan.x,dy=event.clientY-pan.y;
+      if(!pan.active){if(Math.abs(dy)<7||Math.abs(dy)<=Math.abs(dx)*1.2)return;pan.active=true;scale.setAutoScale(false);this.onManualScale?.();}
+      event.preventDefault();event.stopImmediatePropagation();this.tooltip.hidden=true;
+      const shift=dy*(pan.range.to-pan.range.from)/pan.height;
+      scale.setVisibleRange({from:pan.range.from+shift,to:pan.range.to+shift});
+    };
+    globalThis.addEventListener('pointermove',move,true);
+    globalThis.addEventListener('mousemove',move,true);
+    globalThis.addEventListener('mouseup',()=>{pan=null;},true);
+    globalThis.addEventListener('pointerup',()=>{pan=null;},true);
+    globalThis.addEventListener('blur',()=>{pan=null;});
+    target.addEventListener('mouseup',()=>{if(!scale.options().autoScale)this.onManualScale?.();});
+    target.addEventListener('dblclick',event=>{
+      const rect=target.getBoundingClientRect(),pane=this.chart.paneSize(),x=event.clientX-rect.left;
+      if(x>=pane.width&&x<=pane.width+scale.width()){scale.setAutoScale(true);this.onAutoScale?.();}
+    });
   }
   update({symbol,bars,minutes,sourceMinutes,at,nodes,cone,levels,spot,focusRange=null,replay=false,session='ALL',annotations=[],nodeScale,drawingsVisible=true,autoScale=true,candleStyle='classic'}){
     if(!this.chart)return false;

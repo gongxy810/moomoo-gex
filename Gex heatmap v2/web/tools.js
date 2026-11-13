@@ -155,6 +155,7 @@ export class ChartTools{
       select.onchange=()=>{this.setState(key,['chartSession','candleStyle','expectedProvider','expectedHorizon'].includes(key)?select.value:Number(select.value));this.savePrefs();};row.append(select);this.dialog.append(row);
     }
     const auto=node('label','价格轴 Auto Scale','tool-setting'),box=node('input');box.type='checkbox';box.checked=s.chartAutoScale!==false;box.dataset.setting='chartAutoScale';box.onchange=()=>{this.setState('chartAutoScale',box.checked);this.savePrefs();};auto.append(box);this.dialog.append(auto);
+    this.dialog.append(node('p','图内上下拖动平移价格；在右侧价格轴滚轮缩放。Reset view 恢复自动缩放。','quiet'));
     if(!s.tempest?.[s.symbol]?.configured)this.dialog.append(node('p','Tempest 未配置：没有已授权数据；未调用或购买付费行情。','quiet'));
     this.button('open-layers','图层设置','切换至图层菜单',()=>this.layers(),this.dialog);
   }

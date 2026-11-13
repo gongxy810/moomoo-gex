@@ -34,6 +34,8 @@ const latestPrice=(frame,symbol)=>{
   return Date.parse(live.collectedAt??0)>=Date.parse(snapshot?.collectedAt??frame?.collectedAt??0)?live:snapshot??live;
 };
 const chart=new PriceChart($('plot'));
+chart.onManualScale=()=>{state.chartAutoScale=false;};
+chart.onAutoScale=()=>{state.chartAutoScale=true;};
 chart.onNeedHistory=(from,to)=>{if(state.source==='opend')void extendHistory(state.symbol,from,to);};
 let tvMounted=false;
 function mountTvWidget(){
