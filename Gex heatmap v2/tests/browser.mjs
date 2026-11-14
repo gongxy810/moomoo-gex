@@ -24,6 +24,12 @@ const matrixOnly=process.argv.includes('--matrix');
 const rangeOnly=process.argv.includes('--range');
 const axisOnly=process.argv.includes('--axis');
 const focusSwitch=process.argv.includes('--focus-switch');
+const dropdownOnly=process.argv.includes('--dropdowns');
+const replayOnly=process.argv.includes('--bar-replay');
+const hoverOnly=process.argv.includes('--strike-hover');
+const sessionsOnly=process.argv.includes('--sessions');
+const historyPan=process.argv.includes('--history-pan');
+const zeroOnly=process.argv.includes('--zero-gamma');
 const design=process.argv.includes('--design');
 const compareOnly=process.argv.includes('--compare');
 const designData=design?JSON.parse(await readFile('tests/browser-artifacts/design-market.json','utf8')):null;
@@ -69,6 +75,18 @@ const server=createServer(async(req,res)=>{
     if(url.pathname==='/api/snapshot')counts.snapshot++;
     if(url.pathname==='/api/price')counts.price++;
     const symbol=url.searchParams.get('symbol');res.setHeader('Content-Type','application/json');
+    if(url.pathname==='/api/zero-gamma'){
+      const base=frame(symbol),price=base.spot.value-(symbol==='SPXW'?5:.5);
+      res.end(JSON.stringify({available:true,symbol,price,roots:[price],model:'TEST FIXTURE / Volume linear',quality:'Estimated',contracts:120,
+        expiries:['2026-11-09'],price_reference:base.spot.value,price_reference_kind:'RTH',selected:{lower:{strike:Math.floor(price)},upper:{strike:Math.ceil(price)}},
+        search_range:[price*.95,price*1.05],relative_residual:1e-12,capture_at:url.searchParams.get('capture'),asof:url.searchParams.get('asof'),definition:'TEST FIXTURE',assumptions:{source:'synthetic fixture'}}));return;
+    }
+    if(url.pathname==='/api/strike-history'){
+      const asof=Date.parse(url.searchParams.get('asof')),strike=Number(url.searchParams.get('strike')),expiries=url.searchParams.get('expiries').split(',');
+      const cells=frame(symbol).cells.filter(c=>c.strike===strike&&expiries.includes(c.expiry)),value=cells.reduce((s,c)=>s+c.call+c.put,0);
+      const points=Array.from({length:121},(_,i)=>({timestamp:asof-(120-i)*60000-(hoverOnly&&i<30?5*3600000:hoverOnly&&i<60?3600000:0),net_gex:i===120?value:Math.sin(i/18)*Math.max(1,Math.abs(value))}));
+      res.end(JSON.stringify({symbol,strike,net_gex:value,snapshot_at:asof,sparkline_points:points,changes:[{window:'15M',label:'15M',signed_delta:-Math.abs(value)*.2,pct_change:-20},{window:'1H',label:'1H',signed_delta:Math.abs(value)*.1,pct_change:10},{window:'4H',label:'4H',signed_delta:-Math.abs(value)*.4,pct_change:-40},{window:'OPEN',label:'OPEN',signed_delta:-Math.abs(value)*.5,pct_change:-50}]}));return;
+    }
     if(url.pathname==='/api/history'){
       const frames=[5,6,7,10,40].map(i=>frame(symbol,i));
       if(extended&&symbol==='SPY'){
@@ -78,7 +96,17 @@ const server=createServer(async(req,res)=>{
       }
       res.end(JSON.stringify({symbol,frames}));return;
     }
-    if(url.pathname==='/api/price-history'){res.end(JSON.stringify(frame(symbol).price));return;}
+    if(url.pathname==='/api/price-history'){
+      const price=frame(symbol).price;
+      if(historyPan&&price.bars.length){
+        const first=Date.parse(price.bars[0].at),value=price.bars[0].o;
+        const older=Array.from({length:900},(_,i)=>({at:new Date(first-(900-i)*60000).toISOString(),o:value,h:value+.8,l:value-.8,c:value+.2*Math.sin(i/9),phase:'RTH'}));
+        const from=Date.parse(url.searchParams.get('from')??'2000-01-01'),to=Date.parse(url.searchParams.get('to')??'2100-01-01');
+        price.bars=[...older,...price.bars].filter(b=>Date.parse(b.at)>=from&&Date.parse(b.at)<=to);
+        if(to<first)await wait(450);
+      }
+      res.end(JSON.stringify(price));return;
+    }
     if(url.pathname==='/api/expected-provider'){res.end(JSON.stringify({configured:false,provider:'Tempest'}));return;}
     if(url.pathname==='/api/validate'){
       if(symbol==='LATE')await wait(800);
@@ -97,7 +125,7 @@ const server=createServer(async(req,res)=>{
     const types={'.js':'text/javascript','.css':'text/css','.html':'text/html'};
     let data=design&&process.argv.includes('--before')&&designData.assets[path.slice(1)]?Buffer.from(designData.assets[path.slice(1)]):await readFile(resolve('web','.'+path));
     if(design&&process.argv.includes('--before')&&path==='/chart.js')data=Buffer.from(data.toString()+'\nPriceChart.prototype.setControlZones=function(){};\n');
-    if((design||corner||derivedOnly||rangeOnly||cashOnly||axisOnly||focusSwitch)&&path==='/app.js')data=Buffer.from(data.toString().replace("const chart=new PriceChart($('plot'));","const chart=new PriceChart($('plot'));globalThis.__designChart=chart;globalThis.__testState=state;globalThis.__testRender=()=>render();"));
+    if((design||corner||derivedOnly||rangeOnly||cashOnly||axisOnly||focusSwitch||replayOnly||hoverOnly||sessionsOnly||historyPan||zeroOnly)&&path==='/app.js')data=Buffer.from(data.toString().replace("const chart=new PriceChart($('plot'));","const chart=new PriceChart($('plot'));globalThis.__designChart=chart;globalThis.__testState=state;globalThis.__testRender=()=>render();globalThis.__testRefresh=()=>Promise.all([refresh(),refreshPrice()]);"));
     if(design&&process.argv.includes('--before')&&path==='/index.html')data=Buffer.from(data.toString().replace('<option>20</option><option>30</option><option selected>40</option><option>50</option><option>60</option>','<option>20</option><option selected>39</option><option>60</option>'));
     if(design&&compareOnly&&path==='/index.html')data=Buffer.from(data.toString().replace('</head>','<style>#plot{width:690px!important;height:480px!important;min-height:480px!important;max-height:480px!important;flex:none!important}</style></head>'));
     if(path==='/app.js')data=Buffer.from(data.toString().replace("const relay = 'http://127.0.0.1:8766';","const relay = location.origin;"));
@@ -132,7 +160,158 @@ try{
   if(!live)await send('Page.addScriptToEvaluateOnNewDocument',{source:design?`Date.now=()=>${designData.at};`:"Date.now=()=>Date.parse('2026-11-09T18:01:00Z');"});
   await send('Page.navigate',{url:live?'http://127.0.0.1:8766/':`http://127.0.0.1:${server.address().port}`});
   await until("document.querySelectorAll('.ladder').length===3 && document.querySelectorAll('#plot canvas').length>0 && ("+(live?"true":"document.querySelector('#feed-state').textContent!=='Refreshing'")+")");
-  if(cashOnly){
+  if(zeroOnly){
+    await evaluate(`document.querySelector('#symbols button[data-symbol=${process.argv.includes('--spxw')?'SPXW':'SPY'}]').click()`);
+    await until("JSON.parse(document.querySelector('#plot').dataset.zeroGamma||'{}').available===true");
+    if(live){
+      await until("Number(document.querySelector('#plot').dataset.candles)>30");
+      await evaluate("document.querySelector('#reset-chart-view').click()");await wait(500);
+    }
+    const info=await evaluate(live?"JSON.parse(document.querySelector('#plot').dataset.zeroGamma)":"(()=>{const line=__designChart.levels.find(l=>l.label.includes('Zero Gamma'));return{line,model:__testState.zeroGamma}})()");
+    if(!live){assert.equal(info.line.color,'#f3f3f6');assert.equal(info.line.style,2);assert.ok(info.line.detail.includes('Estimated'));
+      await evaluate("document.querySelector('#range').value='20';document.querySelector('#range').dispatchEvent(new Event('change'))");
+      assert.equal(await evaluate("__designChart.levels.find(l=>l.label.includes('Zero Gamma')).price"),info.line.price);
+      await evaluate("document.querySelector('#replay-date').value='2026-11-09';document.querySelector('#replay-time').value='12:00';document.querySelector('#replay-form').requestSubmit()");
+      await until("JSON.parse(document.querySelector('#plot').dataset.zeroGamma||'{}').asof==='2026-11-09T17:00:00.000Z'");
+      assert.ok(await evaluate("Date.parse(__testState.zeroGamma.capture_at)<=__testState.replayCursor"));
+      await evaluate("document.querySelector('#replay-live').click();document.querySelector('#symbols button[data-symbol=SPXW]').click();document.querySelector('#symbols button[data-symbol=QQQ]').click()");
+      await until("JSON.parse(document.querySelector('#plot').dataset.zeroGamma||'{}').symbol==='QQQ'&&JSON.parse(document.querySelector('#plot').dataset.zeroGamma).available");
+    }
+    const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,live?'zero-gamma-live.png':'zero-gamma-fixture.png'),Buffer.from(shot.data,'base64'));
+    assert.deepEqual(exceptions,[]);console.log(JSON.stringify({address:live?'http://127.0.0.1:8766/':'synthetic fixture',info:live?{model:info.model,symbol:info.symbol,price:info.price,expiries:info.expiries,capture_at:info.capture_at,selected:info.selected}:info,exceptions}));
+  }
+  else if(historyPan&&live){
+    await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click();document.querySelector('#reset-chart-view').click()");await wait(1800);await until("!document.querySelector('#chart-message').textContent.includes('历史节点加载中')");
+    const read=()=>evaluate("({candles:+document.querySelector('#plot').dataset.candles,last:+document.querySelector('#plot').dataset.lastCandleClose,visibility:document.querySelector('#plot').dataset.priceVisibility,range:document.querySelector('#plot').dataset.priceRange})");
+    const before=await read(),point=await evaluate("(()=>{const r=document.querySelector('#plot').getBoundingClientRect();return{x:r.x+r.width*.25,y:r.y+r.height*.4}})()");
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',buttons:1,clickCount:1});
+    for(let i=1;i<=5;i++)await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:point.x+i*24,y:point.y,button:'left',buttons:1});
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',x:point.x+120,y:point.y,button:'left',buttons:0,clickCount:1});await wait(1800);
+    await until("!document.querySelector('#chart-message').textContent.includes('历史节点加载中')");const after=await read();
+    assert.ok(after.candles>=before.candles&&after.last>=before.last&&Number(after.visibility.split('/')[0])>0);
+    const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,'history-pan-live.png'),Buffer.from(shot.data,'base64'));
+    assert.deepEqual(exceptions,[]);console.log(JSON.stringify({address:'http://127.0.0.1:8766/',before,after,exceptions}));
+  }
+  else if(historyPan){
+    await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click()");await until("!__testState.historyPending.SPY&&__testState.priceHistory.SPY?.bars.length>500");
+    await evaluate("__designChart.chart.timeScale().setVisibleLogicalRange({from:0,to:60});globalThis.__panReference=__designChart.visibleCandles[30].time");await wait(100);
+    const read=()=>evaluate("(()=>{const c=__designChart,s=c.chart.timeScale(),pane=c.chart.paneSize();return{count:c.series.data().length,first:c.series.data()[0]?.time,last:c.series.data().at(-1)?.time,referenceX:s.timeToCoordinate(__panReference),liveFirst:__testState.prices.SPY.bars[0]?.at,visible:c.visibleCandles.filter(b=>{const x=s.timeToCoordinate(b.time),y=c.series.priceToCoordinate(b.close);return x>=0&&x<=pane.width&&y>=0&&y<=pane.height}).length}})()");
+    const before=await read(),p=await evaluate("(()=>{const r=document.querySelector('#plot').getBoundingClientRect(),s=__designChart.chart.paneSize();return{x:r.x+s.width*.3,y:r.y+s.height*.4}})()");
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',...p,button:'left',buttons:1,clickCount:1});
+    for(let i=1;i<=5;i++)await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:p.x+i*24,y:p.y,button:'left',buttons:1});
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',x:p.x+120,y:p.y,button:'left',buttons:0,clickCount:1});
+    const dragged=await read();await wait(180);const loading=await read();assert.equal(loading.count,before.count);assert.ok(loading.visible>0);
+    await until(`__designChart.series.data().length>${before.count}&&!__testState.historyPending.SPY`);const extended=await read();
+    assert.ok(extended.first<before.first);assert.equal(extended.last,before.last);assert.equal(extended.liveFirst,before.liveFirst);assert.ok(Math.abs(extended.referenceX-dragged.referenceX)<1&&extended.visible>0);
+    await evaluate("__testRefresh()");await wait(100);const refreshed=await read();assert.equal(refreshed.count,extended.count);assert.equal(refreshed.first,extended.first);assert.ok(refreshed.visible>0);
+    await evaluate("__designChart.onNeedHistory(Date.parse('2026-11-06T06:00:00Z'),Date.parse('2026-11-06T07:00:00Z'))");await until("!__testState.historyPending.SPY");const emptyHistory=await read();assert.equal(emptyHistory.count,extended.count);assert.ok(emptyHistory.visible>0);
+    assert.deepEqual(exceptions,[]);console.log(JSON.stringify({before,dragged,loading,extended,refreshed,emptyHistory,exceptions}));
+  }
+  else if(sessionsOnly){
+    await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click()");await wait(1800);
+    if(live)await until("!document.querySelector('#chart-message').textContent.includes('历史节点加载中')");
+    if(!live)await evaluate(`(()=>{
+      const times=['2026-11-12T20:55:00Z','2026-11-12T21:00:00Z','2026-11-13T00:55:00Z','2026-11-13T01:00:00Z','2026-11-13T09:00:00Z','2026-11-13T14:25:00Z','2026-11-13T14:30:00Z'];
+      const bars=times.map((at,i)=>({at,o:750+i*.1,h:751+i*.1,l:749+i*.1,c:750.5+i*.1,phase:['RTH','POST','POST','Closed','PRE','PRE','RTH'][i]}));
+      const nodes=Array.from({length:95},(_,i)=>({time:Date.parse('2026-11-13T01:05:00Z')/1000+i*300,price:750,value:-1,weight:1}));
+      __designChart.update({symbol:'SPY',bars,minutes:5,sourceMinutes:1,at:Date.parse('2026-11-13T15:00:00Z'),nodes,cone:null,levels:[],spot:{value:751},sessions:{'2026-11-12':'2026-11-12T21:00:00Z','2026-11-13':'2026-11-13T21:00:00Z'},nodeScale:{min:2,max:8}});
+      __designChart.resetView();
+    })()`);
+    else await evaluate("document.querySelector('#reset-chart-view').click()");
+    await wait(250);
+    const report=await evaluate(live?"({bands:JSON.parse(document.querySelector('#plot').dataset.sessionBands),excluded:+document.querySelector('#plot').dataset.closedTimeNodesExcluded})":"(()=>{const c=__designChart,s=c.chart.timeScale(),a=s.timeToCoordinate(Date.parse('2026-11-13T01:00:00Z')/1000),b=s.timeToCoordinate(Date.parse('2026-11-13T09:00:00Z')/1000),canvas=c.chart.takeScreenshot(true,false),ctx=canvas.getContext('2d'),pixel=at=>[...ctx.getImageData(Math.round((s.timeToCoordinate(Date.parse(at)/1000)+s.options().barSpacing*.18)*devicePixelRatio),Math.round(13*devicePixelRatio),1,1).data];return{gapBars:(b-a)/s.options().barSpacing,bands:c.layer.sessionBands,excluded:+c.target.dataset.closedTimeNodesExcluded,pixels:{pre:pixel('2026-11-13T09:00:00Z'),post:pixel('2026-11-12T21:00:00Z')},candles:c.series.data().length}})()");
+    assert.ok(report.bands.some(b=>b.phase==='PRE')&&report.bands.some(b=>b.phase==='POST'));
+    if(!live){assert.ok(report.gapBars<1.01&&report.gapBars>.99);assert.equal(report.candles,7);assert.equal(report.excluded,95);assert.ok(report.pixels.pre[0]>report.pixels.pre[2]);assert.ok(report.pixels.post[2]>report.pixels.post[0]);}
+    const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,live?'sessions-live.png':'sessions-fixture.png'),Buffer.from(shot.data,'base64'));
+    assert.deepEqual(exceptions,[]);console.log(JSON.stringify({report,exceptions}));
+  }
+  else if(hoverOnly){
+    await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click()");await wait(1400);
+    const hover=async selector=>{await evaluate(`[...document.querySelectorAll('${selector}')].at(-1).scrollIntoView({block:'center'})`);await wait(100);const point=await evaluate(`(()=>{const row=[...document.querySelectorAll('${selector}')].at(-1);const r=row.getBoundingClientRect();return{x:r.x+r.width*.7,y:r.y+r.height/2,strike:row.dataset.strike,title:row.hasAttribute('title')}})()`);assert.equal(point.title,false);await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:point.x,y:point.y});await until("!document.querySelector('#strike-hover-card').hidden && +document.querySelector('#strike-hover-card').dataset.points>0");return point;};
+    const selected=await hover('[data-ladder=middle] .strike-row.king');
+    const summary=await evaluate("(()=>{const c=document.querySelector('#strike-hover-card'),r=c.getBoundingClientRect();return{text:c.textContent,strike:c.dataset.strike,points:+c.dataset.points,svg:c.querySelectorAll('svg').length,pointer:getComputedStyle(c).pointerEvents,bottom:r.bottom,height:r.height,width:r.width}})()");
+    assert.equal(summary.strike,selected.strike);if(!live)assert.equal(summary.points,91);else assert.ok(summary.points>0);assert.equal(summary.pointer,'none');assert.ok(summary.svg>=2&&summary.text.includes('CHANGE')&&summary.text.includes('OPEN')&&summary.text.includes('1M / 4H'));
+    assert.deepEqual(await evaluate("[...document.querySelectorAll('.strike-hover-change b')].map(e=>e.textContent)"),['15M','1H','4H','OPEN']);
+    assert.ok(await evaluate("(()=>{const c=document.querySelector('#strike-hover-card'),at=Date.parse(c.dataset.asof);return c.__gexSparklinePoints.every(p=>p.timestamp>=at-14400000&&p.timestamp<=at)&&parseFloat(getComputedStyle(c.querySelector('.strike-hover-value')).fontSize)===21.7})()"));
+    const continuous=await evaluate("(()=>{const svg=document.querySelector('.strike-hover-graph svg'),path=svg.querySelector('path').getAttribute('d'),xs=[...path.matchAll(/[ML]([\\d.]+)/g)].map(m=>+m[1]);return{moves:(path.match(/M/g)||[]).length,steps:xs.slice(1).map((x,i)=>x-xs[i]),axis:svg.dataset.timeAxis}})()");
+    assert.equal(continuous.moves,1);assert.equal(continuous.axis,'samples');if(continuous.steps.length)assert.ok(Math.max(...continuous.steps)-Math.min(...continuous.steps)<.03);
+    const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,'strike-hover.png'),Buffer.from(shot.data,'base64'));
+    await send('Emulation.setDeviceMetricsOverride',{width:1500,height:650,deviceScaleFactor:1,mobile:false});
+    const bottom=await hover('[data-ladder=middle] .strike-row');
+    const bounds=await evaluate("(()=>{const r=document.querySelector('#strike-hover-card').getBoundingClientRect();return{top:r.top,bottom:r.bottom,viewport:innerHeight}})()");assert.ok(bounds.top>=8&&bounds.bottom<=bounds.viewport-7);
+    if(live){await evaluate("document.querySelector('#replay-date').value='2026-11-12';document.querySelector('#replay-time').value='15:30';document.querySelector('#replay-form').requestSubmit()");await until("document.querySelector('[data-ladder=middle] .strike-row.king')");}
+    else await evaluate("__testState.replayCursor=Date.parse('2026-11-09T17:00:00Z');__testRender()");
+    await hover('[data-ladder=middle] .strike-row.king');
+    assert.equal(await evaluate("document.querySelector('#strike-hover-card').dataset.asof"),live?'2026-11-12T20:30:00.000Z':'2026-11-09T17:00:00.000Z');
+    assert.ok(await evaluate("(()=>{const c=document.querySelector('#strike-hover-card'),d=c.__gexHoverData;return d.snapshot_at<=Date.parse(c.dataset.asof)&&d.sparkline_points.every(p=>p.timestamp<=Date.parse(c.dataset.asof))})()"));
+    assert.ok(await evaluate("(()=>{const c=document.querySelector('#strike-hover-card'),at=Date.parse(c.dataset.asof);return c.__gexSparklinePoints.every(p=>p.timestamp>=at-14400000&&p.timestamp<=at)})()"));
+    await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:2,y:2});assert.equal(await evaluate("document.querySelector('#strike-hover-card').hidden"),true);
+    assert.deepEqual(exceptions,[]);console.log(JSON.stringify({selected,summary,bottom,bounds,exceptions}));
+  }
+  else if(replayOnly&&live){
+    await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click()");await until("+document.querySelector('#plot').dataset.lastCandleClose>0");
+    const setup=await evaluate("(()=>{const at=+document.querySelector('#plot').dataset.lastCandleClose-3600000;document.querySelector('#replay-date').value=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(at);document.querySelector('#replay-time').value=new Intl.DateTimeFormat('en-GB',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(at);document.querySelector('#replay-form').requestSubmit();return at})()");
+    const stateOf=()=>evaluate("({cursor:document.querySelector('#plot').dataset.cursor,date:document.querySelector('#replay-date').value,time:document.querySelector('#replay-time').value,lastCandle:+document.querySelector('#plot').dataset.lastCandleClose,lastNode:+document.querySelector('#plot').dataset.nodeLastAt,playing:document.querySelector('#replay-play').getAttribute('aria-pressed')})");
+    await until("+document.querySelector('#plot').dataset.nodeLastAt>0");
+    const start=await stateOf();await evaluate("document.querySelector('#replay-step').click()");const step=await stateOf();assert.equal(+step.cursor-(+start.cursor),300000);assert.ok(step.lastCandle<=+step.cursor&&step.lastNode<=+step.cursor);
+    await evaluate("document.querySelector('#replay-speed-button').click();document.querySelector('#replay-speed-listbox [data-value=\"2\"]').click();document.querySelector('#replay-play').click()");await wait(650);await evaluate("document.querySelector('#replay-play').click()");const played=await stateOf();assert.ok(+played.cursor>+step.cursor);assert.equal(played.playing,'false');
+    const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,'bar-replay-live.png'),Buffer.from(shot.data,'base64'));
+    await evaluate("document.querySelector('#replay-live').click()");await until("document.querySelector('#plot').dataset.cursor==='live'");assert.deepEqual(exceptions,[]);console.log(JSON.stringify({address:'http://127.0.0.1:8766/',setup,start,step,played,exceptions}));
+  }
+  else if(replayOnly){
+    await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click()");await until("__testState.histories.SPY?.length>3");
+    const stateOf=()=>evaluate("({cursor:__testState.replayCursor,date:document.querySelector('#replay-date').value,time:document.querySelector('#replay-time').value,playing:document.querySelector('#replay-play').getAttribute('aria-pressed'),lastCandle:+document.querySelector('#plot').dataset.lastCandleClose,lastNode:+document.querySelector('#plot').dataset.nodeLastAt,live:!document.querySelector('#replay-live').hidden})");
+    await evaluate("document.querySelector('#replay-date').value='2026-11-09';document.querySelector('#replay-time').value='12:00';document.querySelector('#replay-form').requestSubmit()");
+    const start=await stateOf();assert.equal(start.cursor,Date.parse('2026-11-09T17:00:00Z'));assert.ok(start.live);
+    await evaluate("document.querySelector('#replay-period-button').click();document.querySelector('#replay-period-listbox [data-value=\"1\"]').click()");
+    assert.equal(await evaluate("document.querySelector('#candle-period-button').textContent"),'5m ⌄');
+    assert.equal(await evaluate("document.querySelector('#replay-period-button').textContent"),'1m ⌄');
+    await evaluate("document.querySelector('#replay-step').click()");assert.equal((await stateOf()).cursor-start.cursor,60000);
+    await evaluate("document.querySelector('#replay-period-button').click();document.querySelector('#replay-period-listbox [data-value=\"5\"]').click();document.querySelector('#replay-time').value='12:00';document.querySelector('#replay-form').requestSubmit()");
+    await evaluate("document.querySelector('#candle-period-button').click();document.querySelector('#candle-period-listbox [data-value=\"5\"]').click()");
+    assert.equal(await evaluate("document.querySelector('#replay-period-button').textContent"),'5m ⌄');
+    await evaluate("document.querySelector('#replay-step').click()");const five=await stateOf();assert.equal(five.cursor-start.cursor,300000);assert.equal(five.time,'12:05');
+    await evaluate("document.querySelector('#replay-period-button').click();document.querySelector('#replay-interval-auto').click();document.querySelector('#replay-period-button').click();document.querySelector('#candle-period').value='2';document.querySelector('#candle-period').dispatchEvent(new Event('change'));document.querySelector('#replay-step').click()");const two=await stateOf();assert.equal(two.cursor-five.cursor,120000);assert.equal(two.time,'12:07');
+    const beforeCounts={...counts};await evaluate("__testRefresh()");assert.deepEqual(counts,beforeCounts);
+    await evaluate("document.querySelector('#replay-speed-button').click();document.querySelector('#replay-speed-listbox [data-value=\"10\"]').click();document.querySelector('#replay-play').click()");await wait(250);
+    await evaluate("document.querySelector('#replay-step').click()");const playingStep=await stateOf();assert.equal(playingStep.playing,'false');assert.ok(playingStep.cursor>two.cursor);assert.ok(playingStep.lastCandle<=playingStep.cursor&&playingStep.lastNode<=playingStep.cursor);
+    await evaluate("document.querySelector('#plot').focus()");await send('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowRight',code:'ArrowRight'});await send('Input.dispatchKeyEvent',{type:'keyUp',key:'ArrowRight',code:'ArrowRight'});const arrow=await stateOf();assert.equal(arrow.cursor-playingStep.cursor,120000);
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key:' ',code:'Space'});await send('Input.dispatchKeyEvent',{type:'keyUp',key:' ',code:'Space'});assert.equal((await stateOf()).playing,'true');
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key:' ',code:'Space'});await send('Input.dispatchKeyEvent',{type:'keyUp',key:' ',code:'Space'});assert.equal((await stateOf()).playing,'false');
+    await evaluate("document.querySelector('#replay-select').click()");await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape'});assert.equal(await evaluate("document.querySelector('#replay-select').getAttribute('aria-pressed')"),'false');
+    await evaluate("document.querySelector('#replay-live').click()");await until("__testState.replayCursor===null");assert.ok(counts.price>beforeCounts.price);
+    await evaluate("document.querySelector('#replay-select').click()");
+    const point=await evaluate("(()=>{const c=__designChart.visibleCandles.at(-15),r=document.querySelector('#plot').getBoundingClientRect();return{x:r.x+__designChart.chart.timeScale().timeToCoordinate(c.time),y:r.y+__designChart.series.priceToCoordinate(c.close),cutoff:(c.time+120)*1000}})()");
+    await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:point.x,y:point.y});assert.equal(await evaluate("document.querySelector('.replay-pick-line').hidden"),false);
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',x:point.x,y:point.y,button:'left',buttons:1,clickCount:1});await send('Input.dispatchMouseEvent',{type:'mouseReleased',x:point.x,y:point.y,button:'left',buttons:0,clickCount:1});
+    const picked=await stateOf();assert.equal(picked.cursor,point.cutoff);assert.equal(await evaluate("document.querySelector('#replay-select').getAttribute('aria-pressed')"),'false');
+    await evaluate("document.querySelector('#replay-time').value='12:58';document.querySelector('#replay-form').requestSubmit();document.querySelector('#replay-play').click()");await until("document.querySelector('#replay-play').getAttribute('aria-pressed')==='false'");const end=await stateOf();assert.equal(end.time,'13:00');
+    const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,'bar-replay.png'),Buffer.from(shot.data,'base64'));
+    assert.deepEqual(exceptions,[]);console.log(JSON.stringify({start,five,two,playingStep,arrow,picked,end,exceptions}));
+  }
+  else if(dropdownOnly){
+    await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click()");
+    await until("+document.querySelector('#plot').dataset.candles>0");
+    const reports=[];
+    for(const id of ['expiry','range','candle-period']){
+      await evaluate(`document.getElementById('${id}-button').click()`);await wait(80);
+      const detail=await evaluate(`(()=>{const s=document.getElementById('${id}'),b=document.getElementById('${id}-button'),p=document.getElementById('${id}-listbox'),i=p.querySelector('[aria-selected=true]'),r=p.getBoundingClientRect(),br=b.getBoundingClientRect();return{id:'${id}',nativeHidden:s.hidden,open:!p.hidden,gap:r.top-br.bottom,radius:getComputedStyle(p).borderRadius,color:getComputedStyle(i).color,background:getComputedStyle(i).backgroundColor,aboveCanvas:p.contains(document.elementFromPoint(r.x+12,r.y+12)),openCount:document.querySelectorAll('.dark-options:not([hidden])').length}})()`);
+      assert.ok(detail.nativeHidden&&detail.open&&detail.aboveCanvas);assert.equal(detail.gap,5);assert.equal(detail.openCount,1);assert.equal(detail.color,'rgb(233, 187, 72)');assert.equal(detail.background,'rgb(36, 33, 23)');reports.push(detail);
+      const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,'dropdown-'+id+'.png'),Buffer.from(shot.data,'base64'));
+    }
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape'});await send('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape'});
+    assert.equal(await evaluate("document.querySelectorAll('.dark-options:not([hidden])').length"),0);
+    await evaluate("document.getElementById('candle-period-button').click();document.querySelector('#candle-period-listbox [data-value=\"1\"]').click()");
+    assert.equal(await evaluate("document.getElementById('candle-period').value"),'1');assert.equal(await evaluate("document.getElementById('candle-period-button').textContent"),'1m ⌄');
+    await evaluate("(()=>{const e=document.getElementById('expiry');for(let i=0;i<35;i++)e.append(new Option('2026-12-'+String(i+1).padStart(2,'0'),'test-'+i));e._darkSelect.sync();document.getElementById('expiry-button').click()})()");
+    const scroll=await evaluate("(()=>{const p=document.getElementById('expiry-listbox');p.scrollTop=p.scrollHeight;return{height:p.clientHeight,content:p.scrollHeight,top:p.scrollTop}})()");
+    assert.ok(scroll.height<=280&&scroll.content>scroll.height&&scroll.top>0);
+    const outside=await evaluate("(()=>{const r=document.querySelector('#plot').getBoundingClientRect();return{x:r.x+100,y:r.y+100}})()");
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',...outside,button:'left',buttons:1,clickCount:1});await send('Input.dispatchMouseEvent',{type:'mouseReleased',...outside,button:'left',buttons:0,clickCount:1});
+    assert.equal(await evaluate("document.querySelectorAll('.dark-options:not([hidden])').length"),0);
+    assert.deepEqual(exceptions,[]);console.log(JSON.stringify({reports,scroll,exceptions}));
+  }
+  else if(cashOnly){
     await until("document.querySelector('.chart-panel').dataset.activeSymbol==='SPXW' && document.querySelector('.chart-panel').dataset.chartMode==='gex' && +document.querySelector('#plot').dataset.candles>0");
     await evaluate("document.querySelector('#derived').click();document.querySelector('#candle-period').value='1';document.querySelector('#candle-period').dispatchEvent(new Event('change'))");
     await until("+document.querySelector('#plot').dataset.candles>=200 && document.querySelector('#candle-period').value==='1'");
@@ -247,6 +426,17 @@ try{
     assert.ok(switched.range.from>700&&switched.range.to<800);
     await evaluate("__designChart.chart.priceScale('right').setAutoScale(false);__designChart.chart.priceScale('right').setVisibleRange({from:390,to:410});__testState.chartAutoScale=false;document.querySelector('#reset-chart-view').click()");await wait(120);
     const recovered=await state();assert.ok(recovered.auto&&recovered.prefAuto&&recovered.range.from>700);
+    await evaluate("__designChart.chart.priceScale('right').setAutoScale(false);__designChart.chart.priceScale('right').setVisibleRange({from:390,to:410});__testState.chartAutoScale=false;__designChart.chart.timeScale().setVisibleLogicalRange({from:10,to:20})");
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',x:coords.pane.x,y:coords.pane.y,button:'right',buttons:2,clickCount:1});
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',x:coords.pane.x,y:coords.pane.y,button:'right',buttons:0,clickCount:1});
+    assert.equal(await evaluate("document.querySelector('.chart-context-menu').hidden"),false);
+    const menuShot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,'chart-context-menu.png'),Buffer.from(menuShot.data,'base64'));
+    const menuPoint=await evaluate("(()=>{const r=document.querySelector('.chart-context-menu button').getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()");
+    await send('Input.dispatchMouseEvent',{type:'mousePressed',...menuPoint,button:'left',buttons:1,clickCount:1});
+    await send('Input.dispatchMouseEvent',{type:'mouseReleased',...menuPoint,button:'left',buttons:0,clickCount:1});await wait(150);
+    const contextReset=await state();assert.ok(contextReset.auto&&contextReset.prefAuto&&contextReset.range.from>700);
+    assert.ok(contextReset.time.from<0&&contextReset.time.to>60);
+    assert.equal(await evaluate("document.querySelector('.chart-context-menu').hidden"),true);
     assert.deepEqual(exceptions,[]);
     console.log(JSON.stringify({coords,before,wheel,pane,axis,horizontal,refreshed,reset,exceptions}));
   }
@@ -375,4 +565,3 @@ try{
 }finally{
   socket?.close();browser.kill();await new Promise(r=>server.close(r));
 }
-

@@ -77,4 +77,3 @@ export function pineHistorySnapshot({symbol,date,frame,dates=[],rows=[],nodes=[]
   return {text:[header,...lines.slice(omittedCount)].join('\n'),exportedCount:lines.length-omittedCount,totalCount:eligible.length,
     omittedCount,rangeAvailable:!!rangeOK};
 }
-

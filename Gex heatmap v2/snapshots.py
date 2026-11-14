@@ -6,6 +6,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 from spx_calibration import calibration_reference, advance_basis
+from strike_history import hover_payload
+from math import isfinite
+from zero_gamma import zero_gamma
 
 
 class SnapshotStore:
@@ -13,6 +16,7 @@ class SnapshotStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = Lock()
+        self.zero_lock,self.zero_cache=Lock(),{}
         with closing(self.connect()) as db, db:
             db.execute('CREATE TABLE IF NOT EXISTS captures (symbol TEXT, at TEXT, frame TEXT, PRIMARY KEY(symbol, at))')
             db.execute("CREATE INDEX IF NOT EXISTS captures_close_idx ON captures(symbol, (julianday(json_extract(frame, '$.sessionClose'))-julianday(at)))")
@@ -21,6 +25,45 @@ class SnapshotStore:
             db.execute('CREATE TABLE IF NOT EXISTS close_archives (symbol TEXT, day TEXT, at TEXT, frame TEXT, PRIMARY KEY(symbol,day))')
             db.execute('CREATE TABLE IF NOT EXISTS spx_basis_states (day TEXT PRIMARY KEY, state TEXT)')
             db.execute('CREATE TABLE IF NOT EXISTS spx_basis_anchors (at TEXT PRIMARY KEY, anchor TEXT)')
+            db.execute('CREATE TABLE IF NOT EXISTS strike_samples (symbol TEXT, day TEXT, expiry TEXT, strike REAL, at INTEGER, net REAL, PRIMARY KEY(symbol,expiry,strike,at))')
+            db.execute('CREATE INDEX IF NOT EXISTS strike_samples_lookup ON strike_samples(symbol,day,strike,expiry,at)')
+            db.execute('CREATE INDEX IF NOT EXISTS strike_samples_retention ON strike_samples(at)')
+            db.execute('CREATE TABLE IF NOT EXISTS strike_backfill (symbol TEXT, day TEXT, through TEXT, PRIMARY KEY(symbol,day))')
+            db.execute('CREATE TABLE IF NOT EXISTS strike_indexed_captures (symbol TEXT, at TEXT, PRIMARY KEY(symbol,at))')
+            db.execute("CREATE INDEX IF NOT EXISTS captures_day_idx ON captures(symbol,json_extract(frame,'$.sessionDate'),at)")
+
+    def index_strikes(self, db, frame):
+        if db.execute('SELECT 1 FROM strike_indexed_captures WHERE symbol=? AND at=?',(frame['symbol'],frame['collectedAt'])).fetchone():return
+        at=int(datetime.fromisoformat(frame['collectedAt'].replace('Z','+00:00')).timestamp()*1000)
+        if frame.get('optionLastAt'):
+            at=max(at,int(datetime.fromisoformat(frame['optionLastAt'].replace('Z','+00:00')).timestamp()*1000))
+        rows=[]
+        for cell in frame.get('cells',[]):
+            c,p,k=cell.get('call'),cell.get('put'),cell.get('strike')
+            if cell.get('complete') is False or not all(isinstance(v,(int,float)) and isfinite(v) for v in (c,p,k)):continue
+            rows.append((frame['symbol'],frame.get('sessionDate',frame['collectedAt'][:10]),cell['expiry'],k,at,c+p))
+        db.executemany('INSERT OR IGNORE INTO strike_samples VALUES (?,?,?,?,?,?)',rows)
+        db.execute('INSERT OR IGNORE INTO strike_indexed_captures VALUES (?,?)',(frame['symbol'],frame['collectedAt']))
+
+    def strike_history(self,symbol,expiries,strike,day,asof):
+        expiries=sorted(set(expiries))
+        if not expiries or len(expiries)>12 or not isfinite(strike) or strike<=0:raise ValueError('Invalid strike or expiry selection')
+        date=datetime.fromisoformat(day).date()
+        cutoff=datetime.fromisoformat(asof.replace('Z','+00:00'))
+        if cutoff.tzinfo is None:raise ValueError('Strike history cutoff needs timezone')
+        limit=int(cutoff.timestamp()*1000)
+        with self.lock,closing(self.connect()) as db,db:
+            progress=db.execute('SELECT through FROM strike_backfill WHERE symbol=? AND day=?',(symbol,day)).fetchone()
+            rows=db.execute("SELECT at,frame FROM captures WHERE symbol=? AND json_extract(frame,'$.sessionDate')=? AND at>? AND NOT EXISTS(SELECT 1 FROM strike_indexed_captures i WHERE i.symbol=captures.symbol AND i.at=captures.at) ORDER BY at",(symbol,day,progress[0] if progress else ''))
+            through=None
+            for at,payload in rows:self.index_strikes(db,json.loads(payload));through=at
+            if through:db.execute('INSERT OR REPLACE INTO strike_backfill VALUES (?,?,?)',(symbol,day,through))
+            placeholders=','.join('?' for _ in expiries)
+            values=db.execute(f'''SELECT at,SUM(net) FROM strike_samples
+                WHERE symbol=? AND day=? AND strike=? AND expiry IN ({placeholders}) AND at<=?
+                GROUP BY at HAVING COUNT(DISTINCT expiry)=? ORDER BY at''',
+                [symbol,day,strike,*expiries,limit,len(expiries)]).fetchall()
+        return hover_payload(symbol,expiries,strike,day,limit,values)
 
     def basis_day(self, db, day):
         saved=db.execute('SELECT state FROM spx_basis_states WHERE day=?',(day,)).fetchone()
@@ -36,6 +79,24 @@ class SnapshotStore:
     def connect(self):
         return sqlite3.connect(self.path, timeout=10)
 
+    def zero_gamma(self,symbol,expiries,asof,capture=None):
+        cutoff=datetime.fromisoformat(asof.replace('Z','+00:00'))
+        if cutoff.tzinfo is None:raise ValueError('Zero Gamma cutoff needs timezone')
+        if capture:
+            captured=datetime.fromisoformat(capture.replace('Z','+00:00'))
+            if captured.tzinfo is None or captured>cutoff:raise ValueError('Capture is after cutoff or lacks timezone')
+        with closing(self.connect()) as db:
+            if capture:row=db.execute('SELECT frame FROM captures WHERE symbol=? AND at=?',(symbol,capture)).fetchone()
+            else:row=db.execute('SELECT frame FROM captures WHERE symbol=? AND at<=? ORDER BY at DESC LIMIT 1',
+                (symbol,cutoff.astimezone(timezone.utc).isoformat(timespec='seconds'))).fetchone()
+        if not row:return {'available':False,'reason':'没有该截止时刻之前的完整期权快照','asof':asof,'roots':[]}
+        frame=json.loads(row[0]);key=(symbol,frame['collectedAt'],tuple(sorted(set(expiries))),asof)
+        with self.zero_lock:
+            if key not in self.zero_cache:
+                self.zero_cache[key]=zero_gamma(frame,expiries,asof)
+                if len(self.zero_cache)>64:self.zero_cache.pop(next(iter(self.zero_cache)))
+            return self.zero_cache[key]
+
     def save(self, frame):
         if not frame.get('usable'):
             return
@@ -46,6 +107,7 @@ class SnapshotStore:
         with self.lock, closing(self.connect()) as db, db:
             db.execute('INSERT OR IGNORE INTO captures VALUES (?,?,?)',
                        (frame['symbol'], frame['collectedAt'], json.dumps(compact, allow_nan=False)))
+            self.index_strikes(db,frame)
             if frame['symbol']=='SPXW':
                 self.basis_day(db,frame['sessionDate'])
                 row=db.execute('SELECT anchor FROM spx_basis_anchors WHERE at=?',(frame['collectedAt'],)).fetchone()
@@ -60,6 +122,7 @@ class SnapshotStore:
                     (frame['symbol'],frame['sessionDate'],frame['collectedAt'],json.dumps(archived,allow_nan=False)))
             cutoff = (datetime.now(timezone.utc)-timedelta(days=10)).isoformat(timespec='seconds')
             db.execute('DELETE FROM captures WHERE at < ?', (cutoff,))
+            db.execute('DELETE FROM strike_samples WHERE at < ?',(int((datetime.now(timezone.utc)-timedelta(days=10)).timestamp()*1000),))
 
     def history(self, symbol, limit=2000, day=None):
         with self.lock, closing(self.connect()) as db:
@@ -145,4 +208,3 @@ class SnapshotStore:
             row=db.execute('SELECT meta FROM price_meta WHERE symbol=?',(symbol,)).fetchone()
         return {**(json.loads(row[0]) if row else {'symbol':symbol,'barMinutes':1,'source':'OpenD'}),
                 'bars':[json.loads(b[0]) for b in bars]}
-

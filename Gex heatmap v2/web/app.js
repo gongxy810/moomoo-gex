@@ -1,7 +1,7 @@
 import { symbols, pollMs, finite, datesFor, nearest, sum, net, groups, king, velocity, nodeCandidates,
-  baseline, palette, termPalette, demoFrame, rowVelocity, dayChange, walls, retainHistory, strikeView, viewSettings } from './model.js';
+  baseline, palette, termPalette, demoFrame, rowVelocity, dayChange, walls, retainHistory, strikeView, viewSettings, aggregateBars } from './model.js';
 import {PriceChart} from './chart.js';
-import {ChartTools,DarkSelect} from './tools.js';
+import {ChartTools,DarkSelect,StrikeHoverCard} from './tools.js';
 import {ReplayClock,frameAt,marketDate,spotLabel,spotPosition,snapshotTrail,etTimestamp,spxProxy} from './replay.js';
 import {openDExpected,fixedDayRange,outsideDayRange,coneHeld,pinScore,tempestExpected,tempestDayRange,tempestRunningSigma} from './expected.js';
 import {gexSnapshot,pineHistorySnapshot} from './gex-export.js';
@@ -9,6 +9,7 @@ import {gexSnapshot,pineHistorySnapshot} from './gex-export.js';
 
 const $ = id => document.getElementById(id);
 const WALL_KING_LINE_STYLE=2; // Lightweight Charts LineStyle.Dashed
+const zeroGammaCache=new Map();let zeroGammaPending=false;
 const state = {symbol:'SPXW', source:'opend', expiry:'0dte', limit:40, frames:[], index:null,
   derived:true, cone:false, pinned:null, errors:{}, busy:false, center:'Spot', speed:5};
 let timer, controller, priceTimer, priceGeneration=0;
@@ -23,6 +24,7 @@ Object.assign(state,{focusId:'left',histories:{},prices:{},candleMinutes:5,chart
 Object.assign(state,{replayCursor:null,replayHistories:{},replayPending:new Set(),replayDateOrder:[],priceHistory:{},placeholders:{},columnStatus:{},columnVersions:{},
   chartSession:'ALL',drawingsVisible:true,nodeMin:2,nodeMax:8,nodeAlphaMin:.30,nodeAlphaMax:.85,supportedPeriods:[1,2,5,15],requests:[],sourceGeneration:0,captureStatus:{},priceStatus:{},replayRequestVersions:{},replayWindowBounds:{},historyBounds:{},historyPending:{}});
 Object.assign(state,{expectedProvider:'OpenD',expectedHorizon:'today',tempest:{},fixedRanges:[],chartAutoScale:true,candleStyle:'classic'});
+Object.assign(state,{replayInterval:5,replayAutoInterval:false,replaySourceMinutes:1});
 try{const records=JSON.parse(localStorage.getItem('gex-fixed-ranges-v1')??'[]');if(Array.isArray(records))state.fixedRanges=records.filter(r=>r&&r.available&&finite(r.at)&&finite(r.until)).slice(-1000);}catch{}
 const selectedSymbols=()=>[...new Set(state.columns.map(c=>c.symbol))];
 const priceSymbols=()=>[...new Set([...selectedSymbols(),...(selectedSymbols().includes('SPXW')?['SPY']:[])])];
@@ -33,8 +35,9 @@ const historyFor=symbol=>{
 };
 const latestPrice=(frame,symbol)=>{
   const live=state.prices[symbol],snapshot=frame?.price;
-  if(!live)return snapshot;
-  return Date.parse(live.collectedAt??0)>=Date.parse(snapshot?.collectedAt??frame?.collectedAt??0)?live:snapshot??live;
+  const current=!live?snapshot:Date.parse(live.collectedAt??0)>=Date.parse(snapshot?.collectedAt??frame?.collectedAt??0)?live:snapshot??live;
+  const cached=state.priceHistory[symbol];
+  return cached?.bars?.length?{...cached,...current,bars:cached.bars,sessions:{...cached.sessions,...current?.sessions}}:current;
 };
 const chart=new PriceChart($('plot'));
 const resetChartButton=$('reset-chart-view');resetChartButton.textContent='Reset view';
@@ -57,13 +60,21 @@ function syncChartMode(){
 const scheduleRender=()=>{if(renderQueued)return;renderQueued=true;(globalThis.requestAnimationFrame??(fn=>setTimeout(fn,0)))(()=>{renderQueued=false;render();});};
 if(globalThis.IntersectionObserver){const observer=new IntersectionObserver(entries=>{detailsVisible=entries.some(e=>e.isIntersecting);if(detailsVisible&&detailView){details(detailView);detailView=null;}},{rootMargin:'160px'});observer.observe(document.querySelector('.detail'));}
 const clock=new ReplayClock(cursor=>{
+  const entering=state.replayCursor===null&&cursor!==null,exiting=state.replayCursor!==null&&cursor===null;
+  if(entering){clearTimeout(timer);clearTimeout(priceTimer);controller=null;priceGeneration++;state.busy=false;}
   if(cursor!==null&&state.replayMax&&cursor>state.replayMax){clock.pause();cursor=state.replayMax;clock.cursor=cursor;}
   state.replayCursor=cursor;state.index=cursor===null?null:0;render();chart.latest();if(cursor!==null)void loadReplayDay(cursor);
+  if(exiting){void refresh();void refreshPrice();}
 });
+chart.onReplayPick=at=>{setReplayPicking(false);clock.seek(at);};
+function setReplayPicking(enabled){state.replayPicking=enabled;chart.setReplayPick(enabled);$('replay-select').setAttribute('aria-pressed',String(enabled));}
 const tools=new ChartTools({chart,panel:document.querySelector('.chart-panel'),target:$('plot'),getState:()=>state,
-  setState:(key,value)=>{state[key]=value;if(key==='candleMinutes')clock.stepMs=value*60000;render();},
+  setState:(key,value)=>{if(key==='candleMinutes'){setReplayPeriod(value);return;}state[key]=value;render();},
   onLatest:()=>{if(state.replayCursor===null)refreshPrice();}});
 const saveColumns=()=>{try{localStorage.setItem('gex-columns',JSON.stringify(state.columns));}catch{}};
+const strikeHover=new StrikeHoverCard({target:$('trinity'),load:spec=>spec.source==='opend'?
+  requestJson('strike-history',spec.symbol,AbortSignal.timeout(30000),{strike:spec.strike,expiries:spec.expiries.join(','),date:spec.date,asof:spec.asof}):
+  Promise.resolve({net_gex:spec.net_gex,sparkline_points:[],reason:'Demo · no recorded strike history'})});
 
 const relay = location.hostname==='127.0.0.1'&&location.protocol==='http:'?location.origin:'http://127.0.0.1:8766';
 const px = n => finite(n) ? n.toLocaleString('en-US', {maximumFractionDigits:4, useGrouping:false}) : '—';
@@ -156,9 +167,11 @@ function renderLadder(column, data, previous) {
     const isKing = peak?.strike === row.strike;
     const line = element('div','', 'strike-row' + (isKing ? ' king' : '') + (atSpot === row.strike ? ' nearest' : ''));
     line.tabIndex = 0;
+    line.dataset.strike=row.strike;
     const metric=rowVelocity(row,before.get(row.strike),dates,previous?dates.filter(d=>previous.dates.includes(d)):[]);
     const move=metric.value;
-    line.title=`${symbol} ${px(row.strike)} · 前值 ${exactCash(metric.before)} · 现值 ${exactCash(row.value)} · signed Δ ${exactCash(metric.delta)} · |GEX| Δ ${exactCash(metric.magnitude)} · 实际比较 ${previous?.collectedAt??'—'} → ${frame?.captureAt??frame?.collectedAt??'—'} · 基准目标 ${new Date((state.replayCursor??Date.now())-state.speed*60000).toISOString()} · 到期 ${dates.join(', ')} · ${metric.flipped?'Flipped':'无翻号'} · ${state.speed}m · ${metric.reason??''}${!previous?' · 同一交易时段内无目标时刻之前的有效基准，或基准超过允许偏差（最多90秒）':''}`;
+    line.__gexHover={symbol,source:state.source,strike:row.strike,expiries:[...dates],net_gex:row.value,date:frame.sessionDate,
+      asof:new Date(state.replayCursor??Date.parse(frame.captureAt??frame.collectedAt)).toISOString(),replay:state.replayCursor!==null};
     const exposure = element('div', '', 'strike-value');
     Object.assign(exposure.style, palette(row.value, min, max));
     exposure.append(element('span',metric.label+(metric.flipped?' ↔':''),'velocity '+tone(move))); 
@@ -201,6 +214,23 @@ function renderSpxLevels(view,frame,spot,proxy){
   items.push(element('span',proxy?.reason??'缺少 SPX 现金指数 K 线及可用 SPY/SPXW 推算价，暂不绘制到价格轴','quality'));
   target.replaceChildren(...items);
   target.title=`OpenD SPXW · GEX ${frame?.captureAt??frame?.collectedAt??'—'} · 到期 ${view.dates.join(', ')||'无'} · 原始 strike；${proxy?.reason??'未取得可用的 SPX 推算价'}`;
+}
+
+function zeroGammaFor(frame,dates){
+  if(state.source!=='opend'||!frame?.cells?.length||!dates.length)return {available:false,reason:'没有已采集的真实期权集合'};
+  const capture=frame.captureAt??frame.collectedAt;
+  const asof=new Date(state.replayCursor??Date.parse(capture)).toISOString();
+  const key=JSON.stringify([state.source,frame.symbol,capture,dates,asof]);state.zeroGammaContext=key;
+  if(zeroGammaCache.has(key))return zeroGammaCache.get(key);
+  if(!zeroGammaPending){
+    zeroGammaPending=true;
+    requestJson('zero-gamma',frame.symbol,AbortSignal.timeout(30000),{expiries:dates.join(','),capture,asof}).then(data=>{
+      if(typeof data.available!=='boolean')throw new Error('Invalid Zero Gamma response');zeroGammaCache.set(key,data);
+    }).catch(error=>zeroGammaCache.set(key,{available:false,reason:error.message})).finally(()=>{
+      zeroGammaPending=false;if(zeroGammaCache.size>64)zeroGammaCache.delete(zeroGammaCache.keys().next().value);scheduleRender();
+    });
+  }
+  return {available:false,loading:true,reason:'计算中'};
 }
 
 function renderChart(view) {
@@ -278,6 +308,14 @@ function renderChart(view) {
   const {nodes,trailCount,candidates,loadedSize}=sampled;
   $('derived').textContent=`Derived ${loadedSize}/${selectedSymbols().filter(s=>s==='SPY'&&state.symbol==='SPXW').length}`;
   const levels=[],annotations=[];
+  const zero=zeroGammaFor(frame,view.dates);state.zeroGamma=zero;
+  if(zero.available&&zero.roots?.length){
+    levels.push({price:zero.price,color:'#f3f3f6',label:'Zero Gamma',style:WALL_KING_LINE_STYLE,
+      detail:`Estimated Volume Zero Gamma · ${zero.model} · 0DTE ${zero.expiries?.join(', ')} · OpenD Gamma × session Volume · calls + / puts − · ${zero.contracts} captured contracts · linear interpolation · nearest reference ${px(zero.price_reference)} (${zero.price_reference_kind}) · bracket ${zero.selected?.lower.strike} / ${zero.selected?.upper.strike} · ${zero.asof}${proxy?.available?' · SPX proxy axis':''}`});
+  }
+  $('zero-gamma-status').textContent=zero.available?'╍ Zero Gamma · 0DTE Volume (linear)':zero.loading?'╍ Zero Gamma …':'╍ Zero Gamma —';
+  $('zero-gamma-status').title=zero.available?`${zero.definition} · ${JSON.stringify(zero.assumptions)}`:zero.reason;
+  $('plot').dataset.zeroGamma=JSON.stringify(zero);
   if(finite(spot?.value))levels.push({price:spot.value,color:label==='Spot'?'#ce8d88':'#bfa56a',label});
   if(view.peak)levels.push({price:view.peak.strike,color:'#d5b754',label:'★ King',style:WALL_KING_LINE_STYLE});
   const wall=walls(view.shown,spot?.value??0);
@@ -314,10 +352,12 @@ function renderChart(view) {
   state.heldStats=coneHeld(state.source==='opend'?state.fixedRanges:[],price?.dailyCloses??[],price?.sessions??{},at,state.symbol==='SPXW'?'SPX':state.symbol,{provider:state.expectedProvider,...(state.expectedProvider==='Tempest'?{modelVersion:'tempest-fixed-provider-v1'}:{})});
   state.supportedPeriods=[1,2,5,15].filter(v=>v>=sourceMinutes&&v%sourceMinutes===0);
   if(!state.supportedPeriods.includes(state.candleMinutes)&&state.supportedPeriods.length)state.candleMinutes=state.supportedPeriods[0];
-  clock.stepMs=state.candleMinutes*60000;
+  state.replaySourceMinutes=sourceMinutes;clock.stepMs=replayStepMinutes()*60000;
   $('candle-period').value=String(state.candleMinutes);
   for(const option of $('candle-period').options??[])option.disabled=!state.supportedPeriods.includes(Number(option.value));
+  $('candle-period')._darkSelect?.sync();
   const messages=[];
+  if(!zero.available)messages.push(`Zero Gamma ${zero.loading?'计算中':'不可用：'+zero.reason}`);
   if(state.historyPending[state.symbol])messages.push('历史节点加载中；价格与热图独立可用');
   if(replay&&state.replayPending.has(`${state.symbol}|${marketDate(at)}`))messages.push('Replay 历史数据加载中');
   const runningSigma=state.expectedProvider==='Tempest'?tempestRunningSigma(payload,{symbol:state.symbol,sessionDate:frame?.sessionDate,at}):null;
@@ -330,7 +370,7 @@ function renderChart(view) {
     {low:fixed.impliedLow1,high:fixed.impliedHigh1}:null;
   chart.update({symbol:state.symbol,bars:chartHasPrice?bars:[],minutes:state.candleMinutes,sourceMinutes,at,nodes:chartHasPrice?nodes:[],cone:chartHasPrice&&cone?{...cone,sigmas:state.twoSigma?[1,2]:[1]}:null,
     focusRange:chartHasPrice?focusRange:null,
-    levels:chartHasPrice?priceLevels:[],spot:chartHasPrice?(proxy?.available?{value:bars.at(-1)?.c}:spot):null,replay,session:state.chartSession,annotations:chartHasPrice?annotations:[],nodeScale:{min:state.nodeMin,max:state.nodeMax,alphaMin:state.nodeAlphaMin,alphaMax:state.nodeAlphaMax},drawingsVisible:state.drawingsVisible,autoScale:state.chartAutoScale,candleStyle:state.candleStyle});
+    levels:chartHasPrice?priceLevels:[],spot:chartHasPrice?(proxy?.available?{value:bars.at(-1)?.c}:spot):null,replay,session:state.chartSession,sessions:price?.sessions??{[frame?.sessionDate]:frame?.sessionClose},annotations:chartHasPrice?annotations:[],nodeScale:{min:state.nodeMin,max:state.nodeMax,alphaMin:state.nodeAlphaMin,alphaMax:state.nodeAlphaMax},drawingsVisible:state.drawingsVisible,autoScale:state.chartAutoScale,candleStyle:state.candleStyle});
   if(proxy?.available)messages.push(`SPX proxy · SPY × 10 + Basis (${proxy.basis>=0?'+':''}${proxy.basis.toFixed(4)}) · ${proxy.quality} · 到期 ${proxy.referenceExpiry} · 校准 ${proxy.refAt} · SPY K ${proxy.lastBarAt} · 本地近似，非现金指数报价`);
   if(state.symbol==='SPXW'&&!chartHasPrice)messages.push(`SPX 自绘图不可用：${proxy?.reason??'SPX 现金指数与同步推算价均不可用'}；SPXW 原始 Levels 单列`);
   if(frame?.historyUnavailable)messages.push('历史 GEX 不可用：该时点之前没有期权快照');
@@ -439,6 +479,7 @@ function render(recenter = false) {
   if (!fixed.some(([key]) => key===state.expiry) && !days.includes(state.expiry)) days.push(state.expiry);
   expiryMenu.replaceChildren(...[...fixed,...days.map(date=>[date,date])].map(([value,label])=>new Option(label,value)));
   expiryMenu.value=state.expiry;
+  expiryMenu._darkSelect?.sync();
   $('symbols').replaceChildren(...state.columns.map(column=>{const b=element('button',column.symbol);b.dataset.symbol=column.symbol;b.dataset.column=column.id;b.setAttribute('aria-pressed',column.id===state.focusId);return b;}));
   const ladders=state.columns.map(column=>{
     const data=bundle?.[column.symbol];
@@ -488,10 +529,12 @@ function render(recenter = false) {
     ['OpenD quotes via loopback','GEX 30s after capture · price 15s (poll frequency ≠ quote delay)','OI-based GEX · USD / 1% move'];
   $('freshness').replaceChildren(...inputs.map(input=>element('span',input)));
   renderReplayControls();
+  strikeHover.refresh();
   $('trinity').dataset.renderMs=(performance.now()-renderStarted).toFixed(1);
 }
 
 function select(symbol) {
+  clock.pause();setReplayPicking(false);
   state.symbol=symbol;
   if (!['0dte','front','week'].includes(state.expiry)) state.expiry='0dte';
   render();
@@ -555,6 +598,7 @@ async function loadColumn(id,symbol,version){
   }
 }
 async function refresh(force=false){
+  if(state.replayCursor!==null)return;
   clearTimeout(timer);if(state.source==='demo')return;
   if(force)for(const symbol of selectedSymbols())void refreshExpectedProvider(symbol);
   const local={};controller=local;state.busy=true;render();
@@ -574,6 +618,7 @@ async function refresh(force=false){
 }
 
 function source(name) {
+  setReplayPicking(false);
   $('connect-dialog').close();
   if (state.source!==name) {
     state.sourceGeneration++;priceGeneration++;clearTimeout(priceTimer);
@@ -609,7 +654,7 @@ $('pin').onclick=()=>{
   render();
 };
 $('timeline').oninput=event=>clock.seek(Number(event.target.value));
-$('latest').onclick=()=>clock.exit();
+$('latest').onclick=()=>{setReplayPicking(false);clock.exit();};
 $('connect').onclick=()=>$('connect-dialog').showModal();
 $('method').onclick=()=>$('method-dialog').showModal();
 function openGexExport(){
@@ -701,14 +746,18 @@ async function choose(raw){
 }
 $('symbol-form').onsubmit=event=>{event.preventDefault();return choose($('symbol-input').value);};
 $('symbol-dialog').addEventListener('close',()=>{validationController?.abort();choiceGeneration++;validationFinished();});
-$('candle-period').onchange=event=>{state.candleMinutes=Number(event.target.value);clock.stepMs=state.candleMinutes*60000;render();};
+function replayStepMinutes(){return Math.max(state.replaySourceMinutes??1,state.replayAutoInterval?state.candleMinutes:state.replayInterval);}
+function setReplayPeriod(value){state.candleMinutes=Number(value);clock.stepMs=replayStepMinutes()*60000;render();}
+$('candle-period').onchange=event=>setReplayPeriod(event.target.value);
+$('replay-period').onchange=event=>{state.replayInterval=Number(event.target.value);state.replayAutoInterval=false;clock.stepMs=replayStepMinutes()*60000;render();};
 for(const [id,key] of [['nodes','nodes'],['walls','walls'],['day-range','dayRange'],['two-sigma','twoSigma']])$(id).onchange=event=>{state[key]=event.target.checked;render();};
 $('node-top').onchange=event=>{state.top=Number(event.target.value);render();};
 $('node-threshold').onchange=event=>{state.threshold=Number(event.target.value);render();};
-function mergePrice(symbol,price){
-  state.prices[symbol]=price;
+function mergePrice(symbol,price,live=true){
+  const current=state.prices[symbol];
+  if(live&&(!current||Date.parse(price.collectedAt??0)>=Date.parse(current.collectedAt??0)))state.prices[symbol]=price;
   const previous=state.priceHistory[symbol]??{},bars=[...new Map([...(previous.bars??[]),...(price.bars??[])].map(b=>[b.at,b])).values()].sort((a,b)=>Date.parse(a.at)-Date.parse(b.at)).slice(-20000);
-  state.priceHistory[symbol]={...previous,...price,bars,sessions:{...previous.sessions,...price.sessions},
+  state.priceHistory[symbol]={...previous,...price,...state.prices[symbol],bars,sessions:{...previous.sessions,...price.sessions,...state.prices[symbol]?.sessions},
     dailyCloses:[...new Map([...(previous.dailyCloses??[]),...(price.dailyCloses??[])].map(d=>[d.date,d])).values()]};
 }
 const hydrating=new Map();
@@ -730,7 +779,7 @@ async function hydrateWindow(symbol,at){
     }catch{}})(),
     (async()=>{try{const data=await requestJson('price-history',symbol,AbortSignal.timeout(30000),{from:start,to:end});
       if(state.source!=='opend'||generation!==state.sourceGeneration)return;
-      const live=state.prices[symbol];mergePrice(symbol,data);if(live)state.prices[symbol]=live;
+      mergePrice(symbol,data,false);
     }catch{}})()
   ]);}finally{delete state.historyPending[symbol];scheduleRender();}
 }
@@ -745,7 +794,7 @@ async function extendHistory(symbol,from,to){
     requestJson('price-history',symbol,AbortSignal.timeout(30000),{from:start,to:end})]);
     if(generation!==state.sourceGeneration||state.source!=='opend')return;
     state.histories[symbol]=[...new Map([...(history.frames??[]),...(state.histories[symbol]??[])].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
-    mergePrice(symbol,price);bound.start=Date.parse(start);scheduleRender();
+    mergePrice(symbol,price,false);bound.start=Date.parse(start);scheduleRender();
   }catch(error){console.info('gex-history',error.message);}finally{delete state.historyPending[symbol];}
 }
 async function refreshExpectedProvider(symbol){
@@ -755,6 +804,7 @@ async function refreshExpectedProvider(symbol){
   }catch{if(generation===state.sourceGeneration)state.tempest[symbol]={configured:false};}
 }
 async function refreshPrice(){
+  if(state.replayCursor!==null)return;
   clearTimeout(priceTimer);const generation=++priceGeneration;
   if(state.source!=='opend'){priceTimer=setTimeout(refreshPrice,15000);return;}
   let collecting=false;
@@ -770,17 +820,33 @@ async function refreshPrice(){
   }finally{if(generation===priceGeneration)priceTimer=setTimeout(refreshPrice,collecting?1000:15000);}
 }
 function renderReplayControls(){
-  const times=selectedSymbols().flatMap(symbol=>[
-    ...(state.priceHistory[symbol]?.bars??[]).map(b=>Date.parse(b.at)+(state.priceHistory[symbol]?.barMinutes??1)*60000),
-    ...historyFor(symbol).map(f=>Date.parse(f.collectedAt))]).filter(Number.isFinite);
+  let price=state.priceHistory[state.symbol]??state.prices[state.symbol]??state.frames.at(-1)?.[state.symbol]?.price;
+  if(state.symbol==='SPXW'&&!price?.bars?.length)price=state.priceHistory.SPY??state.prices.SPY;
+  const times=aggregateBars(price?.bars??[],state.candleMinutes,price?.barMinutes??1)
+    .map(b=>(b.time+state.candleMinutes*60)*1000).filter(t=>Number.isFinite(t)&&t<=Date.now());
   const minimum=Math.floor((times.length?Math.min(...times):Date.now())/60000)*60000,
     maximum=Math.floor((times.length?Math.min(Date.now(),Math.max(...times)):Date.now())/60000)*60000;
   state.replayMin=minimum;state.replayMax=maximum;
-  const slider=$('timeline');slider.min=String(minimum);slider.max=String(maximum);slider.step='60000';slider.value=String(state.replayCursor??maximum);slider.disabled=!times.length;
+  clock.maximum=maximum;
+  const slider=$('timeline');slider.min=String(minimum);slider.max=String(maximum);slider.step=String(replayStepMinutes()*60000);slider.value=String(state.replayCursor??maximum);slider.disabled=!times.length;
   $('timeline-time').textContent=state.replayCursor===null?'Live':new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(state.replayCursor)+' ET';
   if(!$('replay-date').value)$('replay-date').value=marketDate(maximum);
-  $('replay-play').textContent=clock.playing?'暂停':'播放';$('replay-play').disabled=state.replayCursor===null;
-  $('replay-step').disabled=state.replayCursor===null;
+  if(state.replayCursor!==null&&state.replayFormAt!==state.replayCursor){
+    $('replay-date').value=marketDate(state.replayCursor);
+    $('replay-time').value=new Intl.DateTimeFormat('en-GB',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(state.replayCursor);
+    state.replayFormAt=state.replayCursor;
+  }
+  if(state.replayCursor===null)state.replayFormAt=null;
+  $('replay-play').textContent=clock.playing?'⏸':'▶';$('replay-play').disabled=!times.length;
+  $('replay-play').setAttribute('aria-pressed',String(clock.playing));
+  $('replay-step').disabled=!times.length;
+  $('replay-live').hidden=state.replayCursor===null;
+  $('replay-live').setAttribute('aria-pressed',String(state.replayCursor!==null));
+  $('replay-period').value=String(replayStepMinutes());
+  for(const option of $('replay-period').options??[])option.disabled=!finite(Number(option.value))||Number(option.value)<state.replaySourceMinutes;
+  $('replay-period')._darkSelect?.sync();
+  if($('replay-period')._darkSelect?.button)$('replay-period')._darkSelect.button.textContent=replayStepMinutes()+'m ⌄';
+  $('replay-interval-auto').setAttribute('aria-checked',String(state.replayAutoInterval));
 }
 async function loadReplayDay(at){
   if(state.source!=='opend')return;
@@ -791,30 +857,51 @@ async function loadReplayDay(at){
   await Promise.all(priceSymbols().map(async symbol=>{
     const key=`${symbol}|${day}`,bounds=state.replayWindowBounds[key];
     if(bounds&&at>=bounds.start&&at<=bounds.end||pending.has(key))return;
-    pending.add(key);const from=new Date(bounds&&at>bounds.end?bounds.end-40*60000:at-10*3600000).toISOString(),to=new Date(at).toISOString();
+    pending.add(key);scheduleRender();const from=new Date(bounds&&at>bounds.end?bounds.end-40*60000:at-10*3600000).toISOString(),to=new Date(at).toISOString();
     try{const [data,price]=await Promise.all([
       requestJson('history',symbol,AbortSignal.timeout(30000),{from,to,bucket:state.candleMinutes,full:'1'}),
       requestJson('price-history',symbol,AbortSignal.timeout(30000),{from,to})]);
       if(generation!==state.sourceGeneration||state.source!=='opend'||!state.replayDateOrder.includes(day))return;
       state.replayHistories[key]=[...new Map([...(state.replayHistories[key]??[]),...(data.frames??[])].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
-      mergePrice(symbol,price);
+      mergePrice(symbol,price,false);
       state.replayWindowBounds[key]={start:Math.min(bounds?.start??Infinity,Date.parse(from)),end:Math.max(bounds?.end??0,at)};
     }catch(error){console.info('gex-replay-history',error.message);}finally{pending.delete(key);}
   }));if(generation===state.sourceGeneration&&state.replayCursor!==null){render();if(state.replayCursor!==at)setTimeout(()=>loadReplayDay(state.replayCursor),0);}
 }
-$('replay-form').onsubmit=event=>{event.preventDefault();
+function enterReplayFromInputs(){
   const at=etTimestamp($('replay-date').value,$('replay-time').value);
-  if(!Number.isFinite(at)||at>Date.now()){tools.message('回放起点无效或晚于当前时间');return;}
-  clock.stepMs=state.candleMinutes*60000;clock.seek(at);chart.fit();
-};
-$('replay-play').onclick=()=>{if(clock.playing)clock.pause();else clock.play();render();};
-$('replay-step').onclick=()=>{clock.pause();clock.step();};
-$('replay-speed').onchange=event=>{clock.speed=Number(event.target.value);};
+  if(!Number.isFinite(at)||at>Date.now()){tools.message('回放起点无效或晚于当前时间');return false;}
+  setReplayPicking(false);clock.stepMs=replayStepMinutes()*60000;clock.seek(Math.floor(at/clock.stepMs)*clock.stepMs);return true;
+}
+$('replay-form').onsubmit=event=>{event.preventDefault();if(enterReplayFromInputs())chart.fit();};
+for(const id of ['replay-date','replay-time'])$(id).onchange=()=>{if($('replay-date').value&&$('replay-time').value)enterReplayFromInputs();};
+function toggleReplay(){if(clock.playing)clock.pause();else{if(state.replayCursor===null&&!enterReplayFromInputs())return;clock.play();}render();}
+function stepReplay(){clock.pause();if(state.replayCursor===null&&!enterReplayFromInputs())return;clock.step();render();}
+$('replay-select').onclick=()=>{clock.pause();setReplayPicking(!state.replayPicking);renderReplayControls();};
+$('replay-play').onclick=toggleReplay;
+$('replay-step').onclick=stepReplay;
+$('replay-speed').onchange=event=>clock.setSpeed(Number(event.target.value));
+$('replay-live').onclick=()=>{setReplayPicking(false);clock.exit();};
+document.addEventListener?.('keydown',event=>{
+  if(event.key==='Escape'){setReplayPicking(false);return;}
+  if(event.repeat||event.ctrlKey||event.metaKey||event.altKey||event.target.closest?.('input,textarea,select,button,[contenteditable=true],[role=combobox],[role=dialog]'))return;
+  if(event.code==='Space'||event.key===' '){event.preventDefault();toggleReplay();}
+  if(event.key==='ArrowRight'){event.preventDefault();stepReplay();}
+});
 async function start(){
   render();void refresh();void refreshPrice();
   setTimeout(()=>{for(const symbol of [state.symbol,...priceSymbols().filter(s=>s!==state.symbol)])void hydrate(symbol);},1200);
 }
 $('range').value=String(state.limit);$('speed').value=String(state.speed);
 new DarkSelect($('range'),'Strikes');new DarkSelect($('speed'),'GEX Velocity');
+new DarkSelect($('expiry'),'Expiry Date');new DarkSelect($('candle-period'),'Timeframe');
+new DarkSelect($('replay-speed'),'Replay Speed');
+const replayIntervalPicker=new DarkSelect($('replay-period'),'Replay update interval');
+if(replayIntervalPicker.list){
+  const heading=element('div','UPDATE INTERVAL ⓘ','interval-menu-heading');
+  const footer=element('div','','interval-menu-footer');
+  $('replay-interval-auto').hidden=false;footer.append(element('span','Auto select interval'),$('replay-interval-auto'));
+  replayIntervalPicker.decorate(heading,footer);
+}
+$('replay-interval-auto').onclick=()=>{state.replayAutoInterval=!state.replayAutoInterval;clock.stepMs=replayStepMinutes()*60000;render();};
 start();
-

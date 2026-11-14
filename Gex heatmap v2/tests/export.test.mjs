@@ -68,4 +68,3 @@ test('GEX3 keeps all 500 historical nodes, excludes future ones, and reports inp
   const tooMany=pineHistorySnapshot({...base,frame,dates:['2026-11-11'],rows,nodes:[...nodes,...nodes],range:null});
   assert.ok(tooMany.omittedCount>0&&tooMany.text.length<=38000);
 });
-

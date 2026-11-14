@@ -224,4 +224,3 @@ if barstate.islast or barstate.islastconfirmedhistory
         table.cell(summary, 1, 6, syminfo.tickerid + " · " + str.format_time(time, "yyyyMMdd", "America/New_York") + " · " + timeframe.period, text_color = #DFDCE2, text_size = size.tiny)
     else
         table.clear(summary, 0, 0, 1, 6)
-

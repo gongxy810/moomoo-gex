@@ -47,3 +47,11 @@ test('single replay cursor steps, seeks backward and exits without live mutation
   const values=[],clock=new ReplayClock(v=>values.push(v));clock.seek(base);clock.step();clock.seek(base);clock.exit();
   assert.deepEqual(values,[base,base+300000,base,null]);assert.equal(clock.playing,false);
 });
+test('replay speed reschedules immediately and the last full step pauses at the candle limit',t=>{
+  const waits=[];t.mock.method(globalThis,'setTimeout',(fn,ms)=>{waits.push(ms);return waits.length;});t.mock.method(globalThis,'clearTimeout',()=>{});
+  const clock=new ReplayClock(()=>{});clock.seek(base);clock.stepMs=120000;clock.maximum=base+240000;
+  clock.play();assert.equal(waits.at(-1),1000);clock.setSpeed(10);assert.equal(waits.at(-1),100);
+  clock.setSpeed(.5);assert.equal(waits.at(-1),2000);clock.step();assert.equal(clock.cursor,base+120000);
+  clock.step();assert.equal(clock.cursor,clock.maximum);assert.equal(clock.playing,false);
+  clock.step();assert.equal(clock.cursor,clock.maximum);clock.exit();assert.equal(clock.cursor,null);
+});

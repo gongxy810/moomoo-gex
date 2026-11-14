@@ -1,9 +1,20 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {velocity,baseline,rowVelocity,groups,dayChange,aggregateBars,walls,dayRange,expectedMove,retainHistory,net,nearest,strikeView,viewSettings,nodeCandidates,termPalette} from '../web/model.js';
-import {nodeGeometry} from '../web/chart.js';
+import {nodeGeometry,sessionPhase} from '../web/chart.js';
 import {spxProxy} from '../web/spx-proxy.js';
 const at='2026-11-09T15:00:00Z';
+test('session backgrounds follow New York DST, overnight closure, holidays and early closes',()=>{
+  const phase=(at,sessions)=>sessionPhase(Date.parse(at)/1000,sessions);
+  assert.equal(phase('2026-11-13T09:00:00Z'),'PRE'); // 04:00 winter
+  assert.equal(phase('2026-07-09T08:00:00Z'),'PRE'); // 04:00 summer
+  assert.equal(phase('2026-11-12T21:00:00Z'),'POST');
+  assert.equal(phase('2026-11-13T01:00:00Z'),'Closed');
+  assert.equal(phase('2026-11-13T08:59:00Z'),'Closed');
+  assert.equal(phase('2026-11-14T15:00:00Z'),'Closed');
+  assert.equal(phase('2026-11-27T18:00:00Z',{'2026-11-27':'2026-11-27T18:00:00Z'}),'POST');
+  assert.equal(phase('2026-11-26T15:00:00Z',{'2026-11-27':'2026-11-27T18:00:00Z'}),'Closed');
+});
 const frame=(extra={})=>({symbol:'SPY',optionRoot:'US.SPY',model:'v1',sessionDate:'2026-11-09',collectedAt:at,
   previousSession:'2026-11-06',previousSessionClose:'2026-11-06T21:00:00Z',sessionClose:'2026-11-09T21:00:00Z',
   spot:{value:100,phase:'RTH',current:true,comparable:true,at},...extra});
@@ -163,4 +174,3 @@ test('fixed range refuses intraday IV backfill; cone uses calendar half-day end'
   const range=dayRange(f,[captured]);assert.ok(range.move>0);assert.equal(range.iv,.2);
   assert.deepEqual(dayRange({...f,spot:{...f.spot,value:110}},[captured]),range);
 });
-

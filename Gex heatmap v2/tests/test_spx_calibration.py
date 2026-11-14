@@ -48,4 +48,3 @@ class CalibrationTests(unittest.TestCase):
             self.assertEqual(saved['spot']['status'],'REF')
 
 if __name__=='__main__':unittest.main()
-

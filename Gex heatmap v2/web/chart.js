@@ -2,6 +2,18 @@ import {aggregateBars,finite} from './model.js';
 import {closedCandles} from './replay.js';
 
 const et=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+const sessionClock=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',weekday:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
+const sessionDateClock=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
+export const SESSION_COLORS={PRE:'rgba(255,180,105,0.132)',POST:'rgba(134,181,255,0.156)'};
+export function sessionPhase(time,sessions={}){
+  const p=Object.fromEntries(sessionClock.formatToParts(time*1000).map(v=>[v.type,v.value]));
+  const day=`${p.year}-${p.month}-${p.day}`,minute=Number(p.hour)*60+Number(p.minute);
+  if(['Sat','Sun'].includes(p.weekday)||(Object.keys(sessions).length&&!sessions[day]))return 'Closed';
+  if(minute<240||minute>=1200)return 'Closed';
+  if(minute<570)return 'PRE';
+  const close=sessions[day]?Object.fromEntries(sessionClock.formatToParts(Date.parse(sessions[day])).map(v=>[v.type,v.value])):null;
+  return minute<(close?Number(close.hour)*60+Number(close.minute):960)?'RTH':'POST';
+}
 
 export const NODE_STYLE={
   ellipse:{minWidth:2.4,maxWidth:8,minHeight:2.3,maxHeight:7},
@@ -61,6 +73,13 @@ class ExposureLayer {
     ctx.save();
     // Leave the floating control regions clear, in both live rendering and PNG.
     const paneBounds=this.chart.paneSize();ctx.beginPath();ctx.rect(0,0,paneBounds.width,paneBounds.height);
+    if(pass==='bottom'){
+      ctx.save();ctx.clip();
+      const half=this.chart.timeScale().options().barSpacing/2;
+      for(const band of this.sessionBands??[]){const left=x(band.from),right=x(band.to);if(left===null||right===null)continue;
+        ctx.fillStyle=SESSION_COLORS[band.phase];ctx.fillRect(left-half,0,right-left+half*2,paneBounds.height);}
+      ctx.restore();ctx.beginPath();ctx.rect(0,0,paneBounds.width,paneBounds.height);
+    }
     for(const r of this.controlZones??[])ctx.rect(r.x-4,r.y-4,r.width+8,r.height+8);
     ctx.clip('evenodd');
     if(pass==='bottom'){
@@ -134,7 +153,7 @@ export class PriceChart {
     // Drawing endpoints use pointer-up directly: the chart library coalesces quick
     // clicks as a double-click, which must not swallow a trend-line endpoint.
     target.addEventListener('pointerup',event=>{
-      if(!this.drawingMode||event.target.closest?.('.chart-tools,.corner-cone,.drawing-tools,.export-status'))return;
+      if(!this.drawingMode||event.target.closest?.('.chart-tools,.corner-cone,.drawing-tools,.export-status,.chart-context-menu'))return;
       const rect=target.getBoundingClientRect(),point={x:event.clientX-rect.left,y:event.clientY-rect.top};
       const pane=this.chart.paneSize();if(point.x<0||point.y<0||point.x>pane.width||point.y>pane.height)return;
       this.suppressChartClick=performance.now()+200;
@@ -163,12 +182,50 @@ export class PriceChart {
       this.historyTimer=setTimeout(()=>this.onNeedHistory(Number(range.from)*1000,Number(range.to)*1000),120);
     });
     this.installPriceGestures(target);
+    this.installContextMenu(target);
+    this.installReplayPicker(target);
+  }
+  installReplayPicker(target){
+    this.replayLine=document.createElement('div');this.replayLine.className='replay-pick-line';this.replayLine.hidden=true;target.append(this.replayLine);
+    const locate=event=>{
+      const r=target.getBoundingClientRect(),x=event.clientX-r.left,y=event.clientY-r.top,pane=this.chart.paneSize();
+      if(x<0||x>pane.width||y<0||y>pane.height||event.target.closest?.('.chart-tools,.corner-cone,.drawing-tools,.chart-context-menu'))return null;
+      let best=null,distance=Infinity;
+      for(const bar of this.visibleCandles??[]){if((bar.time+this.context.minutes*60)*1000>Date.now())continue;const cx=this.chart.timeScale().timeToCoordinate(bar.time);if(cx!==null&&Math.abs(cx-x)<distance){best={bar,x:cx};distance=Math.abs(cx-x);}}
+      return best;
+    };
+    target.addEventListener('pointermove',event=>{if(!this.replayPicking)return;const picked=locate(event);this.replayLine.hidden=!picked;if(picked){this.replayLine.style.left=picked.x+'px';this.replayLine.style.height=this.chart.paneSize().height+'px';}},true);
+    target.addEventListener('pointerleave',()=>{this.replayLine.hidden=true;});
+    target.addEventListener('pointerup',event=>{if(!this.replayPicking||event.button!==0)return;const picked=locate(event);if(!picked)return;
+      event.preventDefault();event.stopImmediatePropagation();this.setReplayPick(false);this.onReplayPick?.((picked.bar.time+this.context.minutes*60)*1000);
+    },true);
+  }
+  setReplayPick(enabled){if(!this.chart)return;this.replayPicking=enabled;this.target.classList.toggle('replay-picking',enabled);if(!enabled)this.replayLine.hidden=true;if(enabled)this.setDrawingMode(null);}
+  installContextMenu(target){
+    const menu=document.createElement('div');menu.className='chart-context-menu';menu.hidden=true;
+    menu.setAttribute('role','menu');menu.setAttribute('aria-label','Chart actions');
+    const reset=document.createElement('button');reset.type='button';reset.setAttribute('role','menuitem');
+    reset.textContent='↶  Reset chart view';menu.append(reset);target.append(menu);
+    const hide=()=>{menu.hidden=true;};
+    reset.onclick=()=>{hide();this.resetView();target.focus({preventScroll:true});};
+    target.addEventListener('contextmenu',event=>{
+      if(event.target.closest?.('.chart-tools,.corner-cone,.drawing-tools,.export-status,.chart-context-menu'))return;
+      event.preventDefault();hide();
+      const rect=target.getBoundingClientRect();menu.hidden=false;
+      menu.style.left=Math.max(4,Math.min(event.clientX-rect.left,target.clientWidth-menu.offsetWidth-4))+'px';
+      menu.style.top=Math.max(4,Math.min(event.clientY-rect.top,target.clientHeight-menu.offsetHeight-4))+'px';
+      reset.focus({preventScroll:true});
+    });
+    document.addEventListener('pointerdown',event=>{if(!menu.contains(event.target))hide();},true);
+    document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!menu.hidden){hide();target.focus({preventScroll:true});}});
+    globalThis.addEventListener('blur',hide);
+    globalThis.addEventListener('resize',hide);
   }
   installPriceGestures(target){
     const scale=this.chart.priceScale('right');
-    const excluded=event=>event.target.closest?.('.chart-tools,.corner-cone,.drawing-tools,.export-status');
+    const excluded=event=>event.target.closest?.('.chart-tools,.corner-cone,.drawing-tools,.export-status,.chart-context-menu');
     target.addEventListener('wheel',event=>{
-      if(excluded(event)||this.drawingMode||this.editing)return;
+      if(excluded(event)||this.drawingMode||this.editing||this.replayPicking)return;
       const rect=target.getBoundingClientRect(),pane=this.chart.paneSize();
       const x=event.clientX-rect.left,y=event.clientY-rect.top;
       if(x<pane.width||x>pane.width+scale.width()||y<0||y>pane.height)return;
@@ -182,7 +239,7 @@ export class PriceChart {
     },{capture:true,passive:false});
     let pan=null;
     target.addEventListener('mousedown',event=>{
-      if(event.button!==0||excluded(event)||this.drawingMode||this.editing)return;
+      if(event.button!==0||excluded(event)||this.drawingMode||this.editing||this.replayPicking)return;
       const rect=target.getBoundingClientRect(),pane=this.chart.paneSize();
       const x=event.clientX-rect.left,y=event.clientY-rect.top,range=scale.getVisibleRange();
       if(x<0||x>=pane.width||y<0||y>=pane.height||!range)return;
@@ -208,7 +265,7 @@ export class PriceChart {
       if(x>=pane.width&&x<=pane.width+scale.width()){scale.setAutoScale(true);this.onAutoScale?.();}
     });
   }
-  update({symbol,bars,minutes,sourceMinutes,at,nodes,cone,levels,spot,focusRange=null,replay=false,session='ALL',annotations=[],nodeScale,drawingsVisible=true,autoScale=true,candleStyle='classic'}){
+  update({symbol,bars,minutes,sourceMinutes,at,nodes,cone,levels,spot,focusRange=null,replay=false,session='ALL',sessions={},annotations=[],nodeScale,drawingsVisible=true,autoScale=true,candleStyle='classic'}){
     if(!this.chart)return false;
     const renderStarted=performance.now();
     const key=symbol+'|'+minutes;
@@ -228,6 +285,12 @@ export class PriceChart {
     this.tooltip.hidden=true;this.layer.hits=[];
     const eligible=bars.filter(b=>session==='ALL'||(session==='EXT'?['PRE','POST'].includes(b.phase):b.phase===session));
     const candles=replay?closedCandles(eligible,minutes,sourceMinutes,at):aggregateBars(eligible.filter(b=>Date.parse(b.at)<=at),minutes,sourceMinutes);
+    const candleTimes=new Set(candles.map(c=>c.time)),phases=new Map();
+    const phase=t=>{if(!phases.has(t))phases.set(t,sessionPhase(t,sessions));return phases.get(t);};
+    // Historical GEX is also collected overnight. Those captures must never add
+    // time slots during the exchange's closed hours to an otherwise compact axis.
+    const rawCount=nodes.length;nodes=nodes.filter(n=>candleTimes.has(n.time)||phase(n.time)!=='Closed');
+    this.target.dataset.closedTimeNodesExcluded=String(rawCount-nodes.length);
     this.visibleCandles=candles;
     this.layer.focusRange=focusRange&&finite(focusRange.low)&&finite(focusRange.high)&&focusRange.high>focusRange.low?focusRange:null;
     this.target.dataset.priceFocus=this.layer.focusRange?JSON.stringify(this.layer.focusRange):'candles';
@@ -236,6 +299,10 @@ export class PriceChart {
     this.target.dataset.lastCandleClose=candles.length?String((candles.at(-1).time+minutes*60)*1000):'';
     this.target.dataset.cursor=replay?String(at):'live';
     const previous=this.previousCandles??[],sameAxis=this.dataKey===key+'|'+session+'|'+replay;
+    const scale=this.chart.timeScale(),savedLogical=sameAxis?scale.getVisibleLogicalRange():null;
+    const reference=previous[0]?.time,referenceX=reference===undefined?null:scale.timeToCoordinate(reference);
+    const referenceLogical=referenceX===null?null:scale.coordinateToLogical(referenceX);
+    const savedPrice=sameAxis&&!autoScale?this.chart.priceScale('right').getVisibleRange():null;
     let prefix=sameAxis&&candles.length>=previous.length&&(!previous.length||candles[0]?.time===previous[0]?.time);
     if(prefix)for(let i=0;i<Math.max(0,previous.length-1);i++)if(JSON.stringify(candles[i])!==JSON.stringify(previous[i])){prefix=false;break;}
     let dataMode='unchanged';
@@ -246,7 +313,7 @@ export class PriceChart {
     this.target.dataset.chartDataMode=dataMode;
     this.series.applyOptions({lastValueVisible:candles.length>0,priceLineVisible:candles.length>0});
     const curves=[];
-    if(cone)for(const curve of cone.curves??[])if(cone.sigmas.includes(curve.sigma))curves.push(curve.points);
+    if(cone)for(const curve of cone.curves??[])if(cone.sigmas.includes(curve.sigma))curves.push(curve.points.filter(p=>candleTimes.has(p.time)||phase(p.time)!=='Closed'));
     this.target.dataset.cone=cone?JSON.stringify({provider:cone.provider,at:cone.at,until:cone.until,spot:cone.spot,iv:cone.iv,curves}):'';
     // Keep every node/cone time on the chart's time axis without letting remote
     // GEX strikes or future cone prices expand the candle price axis.
@@ -261,6 +328,23 @@ export class PriceChart {
     }
     const anchorData=[...anchors].sort((a,b)=>a[0]-b[0]).map(([time,value])=>({time,value})),anchorKey=JSON.stringify(anchorData);
     if(anchorKey!==this.anchorKey){this.anchor.setData(anchorData);this.anchorKey=anchorKey;}
+    const axisFirst=Math.min(candles[0]?.time??Infinity,anchorData[0]?.time??Infinity);
+    if(sameAxis&&savedLogical&&referenceLogical!==null&&(dataMode==='setData'||axisFirst<(this.axisFirstTime??Infinity))){
+      const nextX=scale.timeToCoordinate(reference),nextLogical=nextX===null?null:scale.coordinateToLogical(nextX);
+      if(nextLogical!==null){const shift=nextLogical-referenceLogical;scale.setVisibleLogicalRange({from:savedLogical.from+shift,to:savedLogical.to+shift});}
+      if(savedPrice)this.chart.priceScale('right').setVisibleRange(savedPrice);
+    }
+    this.axisFirstTime=axisFirst;
+    const timeline=[...new Set([...candleTimes,...anchors.keys()])].sort((a,b)=>a-b),bands=[];
+    let band=null;
+    for(const time of timeline){
+      // A provider's 20:00 final print belongs to the preceding post session.
+      const kind=phase(time)==='Closed'&&candleTimes.has(time)?phase(time-60):phase(time);
+      if(!SESSION_COLORS[kind]){band=null;continue;}
+      const day=sessionDateClock.format(time*1000);
+      if(!band||band.phase!==kind||band.day!==day){band={from:time,to:time,phase:kind,day};bands.push(band);}else band.to=time;
+    }
+    this.layer.sessionBands=bands;this.target.dataset.sessionBands=JSON.stringify(bands);
     const levelKey=JSON.stringify(levels.map(l=>[l.price,l.color,l.style,l.label]));
     if(levelKey!==this.levelKey){for(const line of this.lines)this.anchor.removePriceLine(line);
       this.lines=levels.filter(l=>finite(l.price)&&l.price>0).map(l=>this.anchor.createPriceLine({price:l.price,color:l.color,
@@ -303,7 +387,20 @@ export class PriceChart {
     const scale=this.chart.priceScale('right');scale.setAutoScale(false);scale.setVisibleRange({from:low-pad,to:high+pad});
     this.target.dataset.priceRecovery='recovered';
   }
-  resetView(){if(!this.chart)return;this.chart.priceScale('right').applyOptions({autoScale:true});this.autoScale=true;this.onAutoScale?.();this.defaultRange();requestAnimationFrame(()=>this.ensureVisiblePrices(true));}
+  resetView(){
+    if(!this.chart)return;
+    this.chart.priceScale('right').applyOptions({autoScale:true,scaleMargins:{top:.10,bottom:.10}});
+    this.autoScale=true;this.onAutoScale?.();
+    // Fit actual candles, excluding distant GEX captures and projection times.
+    const scale=this.chart.timeScale(),candles=this.visibleCandles??[];
+    if(candles.length){
+      const first=scale.timeToCoordinate(candles[0].time),last=scale.timeToCoordinate(candles.at(-1).time);
+      const from=first===null?null:scale.coordinateToLogical(first),to=last===null?null:scale.coordinateToLogical(last);
+      if(from!==null&&to!==null){const pad=Math.max(3,(to-from)*.04);scale.setVisibleLogicalRange({from:from-pad,to:to+pad});}
+      else scale.fitContent();
+    }else scale.fitContent();
+    requestAnimationFrame(()=>this.ensureVisiblePrices(true));
+  }
   captureView(){if(!this.chart)return null;const price=this.chart.priceScale('right');return {time:this.chart.timeScale().getVisibleLogicalRange(),price:price.getVisibleRange(),autoScale:price.options().autoScale};}
   restoreView(view){if(!this.chart||!view)return;if(view.time)this.chart.timeScale().setVisibleLogicalRange(view.time);const price=this.chart.priceScale('right');price.applyOptions({autoScale:view.autoScale});if(!view.autoScale&&view.price)price.setVisibleRange(view.price);}
   setControlZones(zones){if(this.layer&&JSON.stringify(zones)!==JSON.stringify(this.layer.controlZones)){this.layer.controlZones=zones;this.layer.requestUpdate?.();}}
@@ -371,7 +468,7 @@ export class PriceChart {
     this.refreshDrawings();
   }
   beginEdit(event){
-    if(this.drawingMode||event.target.closest?.('.chart-tools,.corner-cone,.drawing-tools,.export-status'))return;
+    if(this.drawingMode||event.target.closest?.('.chart-tools,.corner-cone,.drawing-tools,.export-status,.chart-context-menu'))return;
     const r=this.target.getBoundingClientRect(),p={x:event.clientX-r.x,y:event.clientY-r.y};
     for(const d of this.drawings.filter(d=>d.selected)){
       const endpoints=d.type==='horizontal'?['price']:['start','end'];
@@ -401,4 +498,3 @@ export class PriceChart {
     return {blob,filename:`${symbol}_${minutes}m_${new Date(at).toISOString().replace(/[:.]/g,'-')}_${mode}.png`};
   }
 }
-

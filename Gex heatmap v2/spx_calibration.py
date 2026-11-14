@@ -75,4 +75,3 @@ def advance_basis(frame, bars, state):
     anchor={'day':received.astimezone(ET).date().isoformat(),'basis':basis,'rawBasis':raw,'at':frame['collectedAt'],
             'quoted':ref['at'],'close':frame['sessionClose'],'ref':ref,'spy':spy['c']}
     return {**state,'basis':basis,'window':window,'quoteId':ident,'anchor':anchor}
-

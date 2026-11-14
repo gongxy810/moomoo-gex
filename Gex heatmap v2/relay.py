@@ -15,7 +15,7 @@ from spx_calibration import calibration_reference
 from providers import OpenDPriceProvider, RoutedPriceProvider
 
 MODEL = 'OI-gamma-100-unadjusted-v1'
-CAPTURE_VERSION = 'gex-collection-v1'
+CAPTURE_VERSION = 'gex-collection-volume-v2'
 SNAPSHOT_INTERVAL = 1.0  # Official quota: 60 calls / 30s, <=400 codes; keep 50% call headroom.
 SNAPSHOT_LOCK = Lock()
 LAST_SNAPSHOT_AT = 0.0
@@ -89,6 +89,7 @@ def summarize(contracts, rows, spot):
             times.append(at)
         mult = positive(row.get('option_contract_multiplier')) or positive(row.get('option_contract_size'))
         oi, gamma = number(row.get('option_open_interest')), number(row.get('option_gamma'))
+        volume = number(row.get('volume'))
         iv = positive(row.get('option_implied_volatility'))
         if iv:
             cell[side+'Iv'] = iv/100
@@ -101,7 +102,8 @@ def summarize(contracts, rows, spot):
             'ivRaw':iv,'iv':iv/100 if iv else None,'ivUnit':'fraction',
             'at':iso(at),'timestampKind':'OpenD snapshot update_time (not an independent IV timestamp)',
             'settlement':'PM' if re.match(r'^US\.\.?SPXW',code,re.I) else 'equity expiry / calendar RTH close',
-            'multiplier':mult,'source':'OpenD get_market_snapshot'
+            'multiplier':mult,'source':'OpenD get_market_snapshot',
+            'gamma':gamma,'volume':volume,'volumeKind':'session cumulative contracts'
         }
         if mult != 100 or oi is None or oi < 0 or not oi.is_integer() or gamma is None or gamma < 0:
             continue
@@ -511,6 +513,7 @@ class SnapshotManager:
     def _poll(self):
         while not self.closed:
             sleep(1)
+            if self.closed:return
             with self.lock:active=[s for s,t in self.watched.items() if monotonic()-t<1800]
             for symbol in active:
                 self.request(symbol,observe=False)
@@ -585,5 +588,4 @@ class SnapshotManager:
         print(json.dumps({'event':'background-capture','symbol':symbol,**{k:v for k,v in self.status[symbol].items() if k!='finishedMono'}},ensure_ascii=True),flush=True)
 
     def close(self):
-        self.closed=True;self.pool.shutdown(wait=True,cancel_futures=True);self.price_pool.shutdown(wait=True,cancel_futures=True)
-
+        self.closed=True;self.timer.join();self.pool.shutdown(wait=True,cancel_futures=True);self.price_pool.shutdown(wait=True,cancel_futures=True)

@@ -23,7 +23,7 @@ VERSION = '2026-11-10-replay-validation-v2'
 def source_revision():
     root=Path(__file__).resolve().parent
     return hashlib.sha256(b''.join((root/name).read_bytes() for name in
-        ['opend_board.py','relay.py','market.py','providers.py','snapshots.py','spx_calibration.py'])).hexdigest()[:16]
+        ['opend_board.py','relay.py','market.py','providers.py','snapshots.py','spx_calibration.py','strike_history.py','zero_gamma.py'])).hexdigest()[:16]
 
 LOADED_REVISION=source_revision()
 
@@ -92,6 +92,19 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                     symbol, _ = symbol_code(parse_qs(path.query).get('symbol', [''])[0])
                     started=monotonic()
                     print(json.dumps({'event':'request-start','path':path.path,'symbol':symbol}),flush=True)
+                    if path.path == '/api/zero-gamma':
+                        query=parse_qs(path.query);expiries=query.get('expiries',[''])[0].split(',')
+                        if len(expiries)>12:raise ValueError('Too many expiries')
+                        for expiry in expiries:date.fromisoformat(expiry)
+                        result=feed.store.zero_gamma(symbol,expiries,query.get('asof',[''])[0],query.get('capture',[None])[0])
+                        return self.json_response(result,store_ms=(monotonic()-started)*1000)
+                    if path.path == '/api/strike-history':
+                        query=parse_qs(path.query)
+                        dates=query.get('expiries',[''])[0].split(',')
+                        for value in dates:date.fromisoformat(value)
+                        result=feed.store.strike_history(symbol,dates,float(query.get('strike',['nan'])[0]),
+                            query.get('date',[''])[0],query.get('asof',[''])[0])
+                        return self.json_response(result,store_ms=(monotonic()-started)*1000)
                     if path.path == '/api/validate':
                         result=feed.validate(symbol)
                         print(json.dumps({'event':'validate-complete','symbol':symbol,'seconds':round(monotonic()-started,3)}),flush=True)
@@ -180,4 +193,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

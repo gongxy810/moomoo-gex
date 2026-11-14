@@ -80,10 +80,11 @@ export function spotPosition(strikes,value,rowHeight){
 }
 
 export class ReplayClock{
-  constructor(onChange){this.cursor=null;this.playing=false;this.speed=1;this.stepMs=300000;this.timer=null;this.onChange=onChange;}
+  constructor(onChange){this.cursor=null;this.playing=false;this.speed=1;this.stepMs=300000;this.timer=null;this.onChange=onChange;this.maximum=Infinity;}
   seek(at){this.pause();this.cursor=at;this.onChange(at);}
-  step(){if(this.cursor===null)return;this.cursor+=this.stepMs;this.onChange(this.cursor);}
-  play(){if(this.cursor===null||this.playing)return;this.playing=true;this.tick();}
+  step(){if(this.cursor===null)return;const next=this.cursor+this.stepMs;if(next>this.maximum){this.pause();this.onChange(this.cursor);return;}this.cursor=next;if(next+this.stepMs>this.maximum)this.pause();this.onChange(this.cursor);}
+  play(){if(this.cursor===null||this.playing||this.cursor+this.stepMs>this.maximum)return;this.playing=true;this.tick();}
+  setSpeed(speed){if(![.5,1,2,5,10].includes(speed))return;this.speed=speed;if(this.playing){clearTimeout(this.timer);this.tick();}}
   tick(){if(!this.playing)return;this.timer=setTimeout(()=>{this.step();this.tick();},1000/this.speed);}
   pause(){this.playing=false;clearTimeout(this.timer);}
   exit(){this.pause();this.cursor=null;this.onChange(null);}
@@ -139,7 +140,7 @@ export function spxProxy(spyPrice, spxFrames, cutoff){
   if(!bars.length||!latest)return {available:false,reason:'缺少在该 K 线之前已记录的非当日到期 ATM 校准（双边价差 ≤0.40；不再回填 0DTE 比例）'};
   const locked=cutoff>=latest.close-5*60000||cutoff-latest.quoted>90000;
   const eth=cutoff>=latest.close;
-  return {available:true,bars,barMinutes:sourceMinutes,priceSymbol:'SPX_PROXY',basis:latest.basis,
+  return {available:true,bars,sessions:spyPrice?.sessions??{},barMinutes:sourceMinutes,priceSymbol:'SPX_PROXY',basis:latest.basis,
     refAt:new Date(latest.quoted).toISOString(),capturedAt:new Date(latest.at).toISOString(),
     refPrice:latest.ref.value,spyPrice:latest.spy,referenceExpiry:latest.ref.expiry,
     stale:cutoff-latest.quoted>90000,locked,quality:locked?(eth?'ETH · Locked Basis':'Locked Basis'):'Rolling Basis',
@@ -147,5 +148,4 @@ export function spxProxy(spyPrice, spxFrames, cutoff){
     source:'OpenD SPY + SPXW next-expiry basis proxy',calibrations:anchors.length,
     lastBarAt:bars.at(-1).at,reason:locked?'Calibration locked; SPY bars continue independently':null};
 }
-
 

@@ -219,6 +219,8 @@ class HttpTests(unittest.TestCase):
                 self.assertEqual(get('/api/history?symbol=SPY',origin=PRIVATE_ORIGIN).getheader('Access-Control-Allow-Origin'),PRIVATE_ORIGIN)
                 self.assertEqual(get('/api/snapshot?symbol=../x').status,400)
                 self.assertEqual(get('/data/captures.sqlite3').status,404)
+                self.assertEqual(get('/api/strike-history?symbol=SPY&strike=750&expiries=2026-11-12&date=2026-11-12&asof=2026-11-12T20:30:00Z').status,200)
+                self.assertEqual(get('/api/strike-history?symbol=SPY&strike=nan&expiries=2026-11-12&date=2026-11-12&asof=2026-11-12T20:30:00Z').status,400)
             finally:server.shutdown();server.server_close();thread.join()
 
 class ValidationTests(unittest.TestCase):
