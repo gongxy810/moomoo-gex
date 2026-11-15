@@ -1,0 +1,226 @@
+//@version=6
+indicator("Gex heatmap v2 · OpenD history", overlay = true, behind_chart = true, max_lines_count = 50, max_labels_count = 500)
+
+// Paste the GEX3 history block from the board's Export gex levels dialog.
+// Pine cannot read the local OpenD service. Re-paste after a new capture.
+string snapshot = input.text_area("", "Snapshot input (GEX3)", group = "Board data")
+bool showBubbles = input.bool(true, "Historical GEX bubbles", group = "Display")
+bool showRange = input.bool(true, "Fixed Day Expected Range", group = "Display")
+bool showTwoSigma = input.bool(true, "Day ±2σ", group = "Display")
+bool showSummary = input.bool(true, "Snapshot summary", group = "Display")
+
+color gold = #E9BA48
+color purple = #8738D1
+color kingGold = #D5B754
+color callCyan = #55BACE
+color putPink = #D579B5
+color bothWall = #A88EB8
+color rangeBlue = #699BD0
+color panel = #141319
+color quiet = #A9A3B2
+
+var string sourceSymbol = ""
+var string sourceDate = ""
+var string capturedAt = ""
+var string expiries = ""
+var float putWall = na
+var float callWall = na
+var float low1 = na
+var float high1 = na
+var float low2 = na
+var float high2 = na
+var float kingPrice = na
+var float netGex = na
+var float callGex = na
+var float putGex = na
+var string rangeKind = "Day"
+var int sourceMinutes = 5
+var int expectedNodes = 0
+var bool parsed = false
+var bool isHistory = false
+var array<int> nodeTimes = array.new<int>()
+var array<float> nodePrices = array.new<float>()
+var array<float> nodeStrikes = array.new<float>()
+var array<float> nodeGex = array.new<float>()
+var array<float> nodeKings = array.new<float>()
+var array<int> nodeCaptureTimes = array.new<int>()
+var array<string> nodeSources = array.new<string>()
+var array<string> nodeShapes = array.new<string>()
+var array<label> drawnLabels = array.new<label>()
+var table summary = table.new(position.bottom_right, 2, 7, bgcolor = panel, border_width = 1, border_color = #35323D, force_overlay = true)
+
+if barstate.isfirst
+    array<string> records = str.split(snapshot, "\n")
+    if array.size(records) > 0
+        array<string> fields = str.split(str.trim(array.get(records, 0)), "|")
+        if array.size(fields) == 21 and array.get(fields, 0) == "GEX3"
+            isHistory := true
+            sourceSymbol := str.trim(array.get(fields, 1))
+            sourceDate := str.trim(array.get(fields, 2))
+            putWall := str.tonumber(array.get(fields, 3))
+            callWall := str.tonumber(array.get(fields, 4))
+            low1 := str.tonumber(array.get(fields, 5))
+            high1 := str.tonumber(array.get(fields, 6))
+            low2 := str.tonumber(array.get(fields, 7))
+            high2 := str.tonumber(array.get(fields, 8))
+            kingPrice := str.tonumber(array.get(fields, 9))
+            capturedAt := str.trim(array.get(fields, 10))
+            expiries := str.trim(array.get(fields, 11))
+            float minutesField = str.tonumber(array.get(fields, 14))
+            sourceMinutes := na(minutesField) ? 5 : int(minutesField)
+            float countField = str.tonumber(array.get(fields, 15))
+            expectedNodes := na(countField) ? 0 : int(countField)
+            rangeKind := str.trim(array.get(fields, 17)) == "Historical" ? "Hist Day" : "Day"
+            netGex := str.tonumber(array.get(fields, 18))
+            callGex := str.tonumber(array.get(fields, 19))
+            putGex := str.tonumber(array.get(fields, 20))
+            parsed := str.length(sourceDate) == 8 and not na(putWall) and not na(callWall) and not na(kingPrice)
+            if parsed and array.size(records) > 1
+                for i = 1 to math.min(array.size(records) - 1, 2000)
+                    array<string> node = str.split(str.trim(array.get(records, i)), "|")
+                    if array.size(node) == 9 and array.get(node, 0) == "N"
+                        float whenSec = str.tonumber(array.get(node, 1))
+                        float mapped = str.tonumber(array.get(node, 2))
+                        float strike = str.tonumber(array.get(node, 3))
+                        float value = str.tonumber(array.get(node, 4))
+                        float nodeKing = str.tonumber(array.get(node, 5))
+                        float captureSec = str.tonumber(array.get(node, 6))
+                        if not na(whenSec) and not na(mapped) and not na(strike) and not na(value) and not na(nodeKing) and nodeKing != 0 and not na(captureSec)
+                            array.push(nodeTimes, int(whenSec * 1000))
+                            array.push(nodePrices, mapped)
+                            array.push(nodeStrikes, strike)
+                            array.push(nodeGex, value)
+                            array.push(nodeKings, nodeKing)
+                            array.push(nodeCaptureTimes, int(captureSec * 1000))
+                            array.push(nodeSources, str.trim(array.get(node, 7)))
+                            array.push(nodeShapes, str.trim(array.get(node, 8)))
+        else if array.size(fields) == 15 and array.get(fields, 0) == "GEX2"
+            sourceSymbol := str.trim(array.get(fields, 1))
+            sourceDate := str.trim(array.get(fields, 2))
+            putWall := str.tonumber(array.get(fields, 3))
+            callWall := str.tonumber(array.get(fields, 4))
+            low1 := str.tonumber(array.get(fields, 5))
+            high1 := str.tonumber(array.get(fields, 6))
+            kingPrice := str.tonumber(array.get(fields, 7))
+            capturedAt := str.trim(array.get(fields, 8))
+            expiries := str.trim(array.get(fields, 9))
+            netGex := str.tonumber(array.get(fields, 10))
+            callGex := str.tonumber(array.get(fields, 11))
+            putGex := str.tonumber(array.get(fields, 12))
+            parsed := str.length(sourceDate) == 8 and not na(putWall) and not na(callWall) and not na(kingPrice)
+            if parsed and array.size(records) > 1
+                for i = 1 to math.min(array.size(records) - 1, 20)
+                    array<string> level = str.split(str.trim(array.get(records, i)), "|")
+                    if array.size(level) == 4 and array.get(level, 0) == "L"
+                        float strike = str.tonumber(array.get(level, 1))
+                        float value = str.tonumber(array.get(level, 2))
+                        float percent = str.tonumber(array.get(level, 3))
+                        if not na(strike) and not na(value) and not na(percent)
+                            array.push(nodeTimes, 0)
+                            array.push(nodePrices, strike)
+                            array.push(nodeStrikes, strike)
+                            array.push(nodeGex, value)
+                            array.push(nodeKings, math.abs(value) * 100 / math.max(0.001, percent))
+                            array.push(nodeCaptureTimes, 0)
+                            array.push(nodeSources, sourceSymbol)
+                            array.push(nodeShapes, "N")
+
+// SPXW strikes live on the cash SPX axis. Never draw them on FOREXCOM:SPXUSD CFD.
+bool symbolMatches = parsed and (sourceSymbol == "SPXW" ? (syminfo.tickerid == "TVC:SPX" or syminfo.tickerid == "CBOE:SPX") : syminfo.ticker == sourceSymbol)
+bool dateMatches = parsed and str.format_time(time, "yyyyMMdd", "America/New_York") == sourceDate
+bool matchBar = symbolMatches and dateMatches
+bool sameWallPrice = not na(putWall) and putWall == callWall
+plot(matchBar ? putWall : na, "Put Wall / C-P Wall", color = sameWallPrice ? bothWall : putPink, linewidth = 1, style = plot.style_linebr, linestyle = plot.linestyle_dashed, force_overlay = true)
+plot(matchBar and not sameWallPrice ? callWall : na, "Call Wall", color = callCyan, linewidth = 1, style = plot.style_linebr, linestyle = plot.linestyle_dashed, force_overlay = true)
+plot(matchBar and showRange ? low1 : na, "Hist Day -1σ", color = rangeBlue, linewidth = 1, style = plot.style_linebr, linestyle = plot.linestyle_dotted, force_overlay = true)
+plot(matchBar and showRange ? high1 : na, "Hist Day +1σ", color = rangeBlue, linewidth = 1, style = plot.style_linebr, linestyle = plot.linestyle_dotted, force_overlay = true)
+plot(matchBar and showRange and showTwoSigma ? low2 : na, "Hist Day -2σ", color = rangeBlue, linewidth = 1, style = plot.style_linebr, linestyle = plot.linestyle_dotted, force_overlay = true)
+plot(matchBar and showRange and showTwoSigma ? high2 : na, "Hist Day +2σ", color = rangeBlue, linewidth = 1, style = plot.style_linebr, linestyle = plot.linestyle_dotted, force_overlay = true)
+plot(matchBar ? kingPrice : na, "King", color = kingGold, linewidth = 2, style = plot.style_linebr, force_overlay = true)
+var int firstMatchTime = na
+var int lastMatchTime = na
+if matchBar
+    if na(firstMatchTime)
+        firstMatchTime := time
+    lastMatchTime := time
+
+if barstate.islast or barstate.islastconfirmedhistory
+    int drawnNodeCount = 0
+    int visibleNodeCount = 0
+    for oldLabel in drawnLabels
+        label.delete(oldLabel)
+    array.clear(drawnLabels)
+
+    if parsed and symbolMatches and not na(firstMatchTime)
+        bool sameWall = putWall == callWall
+        int rightTime = lastMatchTime + sourceMinutes * 60000
+        int tagTime = math.min(rightTime, math.max(firstMatchTime, chart.right_visible_bar_time))
+        array<float> prices = array.from(putWall, sameWall ? na : callWall, kingPrice, showRange ? low1 : na, showRange ? high1 : na, showRange and showTwoSigma ? low2 : na, showRange and showTwoSigma ? high2 : na)
+        array<string> names = array.from(sameWall ? "C/P Wall" : "Put Wall", "Call Wall", "★ King", rangeKind + " −1σ", rangeKind + " +1σ", rangeKind + " −2σ", rangeKind + " +2σ")
+        array<color> tones = array.from(sameWall ? bothWall : putPink, callCyan, kingGold, rangeBlue, rangeBlue, rangeBlue, rangeBlue)
+        for i = 0 to array.size(prices) - 1
+            float levelPrice = array.get(prices, i)
+            if not na(levelPrice) and levelPrice > 0
+                bool duplicate = false
+                if i > 0
+                    for j = 0 to i - 1
+                        if array.get(prices, j) == levelPrice
+                            duplicate := true
+                if not duplicate
+                    string caption = array.get(names, i)
+                    bool includesKing = i == 2
+                    if i < array.size(prices) - 1
+                        for j = i + 1 to array.size(prices) - 1
+                            if array.get(prices, j) == levelPrice
+                                caption += " / " + array.get(names, j)
+                                includesKing := includesKing or j == 2
+                    color tone = includesKing ? kingGold : array.get(tones, i)
+                    label tag = label.new(tagTime, levelPrice, caption + "  " + str.tostring(levelPrice, format.mintick), xloc = xloc.bar_time, yloc = yloc.price, color = color.new(tone, 8), style = label.style_label_left, textcolor = #0B0B0D, size = size.tiny, tooltip = "OpenD GEX snapshot " + capturedAt + "\nExpiry: " + expiries, force_overlay = true)
+                    array.push(drawnLabels, tag)
+        if showBubbles and array.size(nodeStrikes) > 0
+            for i = 0 to array.size(nodeStrikes) - 1
+                int nodeTime = array.get(nodeTimes, i) == 0 ? lastMatchTime : array.get(nodeTimes, i)
+                if nodeTime >= firstMatchTime and nodeTime <= rightTime and nodeTime >= chart.left_visible_bar_time and nodeTime <= chart.right_visible_bar_time
+                    visibleNodeCount += 1
+            int skippedVisible = math.max(0, visibleNodeCount - 480)
+            int seenVisible = 0
+            for i = 0 to array.size(nodeStrikes) - 1
+                int nodeTime = array.get(nodeTimes, i) == 0 ? lastMatchTime : array.get(nodeTimes, i)
+                float mapped = array.get(nodePrices, i)
+                float strike = array.get(nodeStrikes, i)
+                float value = array.get(nodeGex, i)
+                float percent = math.min(100, math.max(0, 100 * math.abs(value / array.get(nodeKings, i))))
+                if nodeTime >= firstMatchTime and nodeTime <= rightTime and nodeTime >= chart.left_visible_bar_time and nodeTime <= chart.right_visible_bar_time
+                    seenVisible += 1
+                    if seenVisible > skippedVisible
+                        color nodeTone = value >= 0 ? gold : purple
+                        int fade = int(math.round(90 - 0.55 * percent))
+                        bool derived = array.get(nodeShapes, i) == "D"
+                        // The original filled shapes used size.small (10) and size.tiny (~7).
+                        // Pine accepts numeric label sizes, so 5 and 4 keep the same fill at about half scale.
+                        int markSize = percent >= 70 ? 5 : 4
+                        int capturedNode = array.get(nodeCaptureTimes, i)
+                        string details = (derived ? "Derived " : "Native ") + array.get(nodeSources, i) + " GEX\nStrike " + str.tostring(strike, format.mintick) + "\nMapped price " + str.tostring(mapped, format.mintick) + "\nGEX " + str.tostring(value, "#.####") + "\nKing GEX " + str.tostring(array.get(nodeKings, i), "#.####") + "\n" + str.tostring(percent, "#.##") + "% King\nCaptured " + (capturedNode == 0 ? capturedAt : str.format_time(capturedNode, "yyyy-MM-dd HH:mm:ss", "America/New_York")) + " ET\nExpiry " + expiries
+                        label bubble = label.new(nodeTime, mapped, "", xloc = xloc.bar_time, yloc = yloc.price, color = color.new(nodeTone, fade), style = derived ? label.style_diamond : label.style_circle, textcolor = nodeTone, size = markSize, tooltip = details, force_overlay = true)
+                        array.push(drawnLabels, bubble)
+                        drawnNodeCount += 1
+
+    if showSummary
+        string status = not parsed ? "Paste GEX3 export" : not symbolMatches ? "Symbol mismatch · " + sourceSymbol : na(firstMatchTime) ? "Date not on chart · " + sourceDate : "Visible nodes " + str.tostring(drawnNodeCount) + "/" + str.tostring(visibleNodeCount) + " · imported " + str.tostring(array.size(nodeStrikes)) + "/" + str.tostring(expectedNodes)
+        color statusTone = parsed and symbolMatches and not na(firstMatchTime) ? gold : putPink
+        table.cell(summary, 0, 0, "GEX HEATMAP V2", text_color = gold, text_size = size.small)
+        table.cell(summary, 1, 0, status, text_color = statusTone, text_size = size.tiny)
+        table.cell(summary, 0, 1, "Source / date", text_color = quiet, text_size = size.tiny)
+        table.cell(summary, 1, 1, sourceSymbol + " · " + sourceDate, text_color = #DFDCE2, text_size = size.tiny)
+        table.cell(summary, 0, 2, "Captured", text_color = quiet, text_size = size.tiny)
+        table.cell(summary, 1, 2, capturedAt, text_color = #DFDCE2, text_size = size.tiny)
+        table.cell(summary, 0, 3, "Expiry", text_color = quiet, text_size = size.tiny)
+        table.cell(summary, 1, 3, expiries, text_color = #DFDCE2, text_size = size.tiny)
+        table.cell(summary, 0, 4, "Net / Call / Put", text_color = quiet, text_size = size.tiny)
+        table.cell(summary, 1, 4, str.tostring(netGex, format.volume) + " / " + str.tostring(callGex, format.volume) + " / " + str.tostring(putGex, format.volume), text_color = #DFDCE2, text_size = size.tiny)
+        table.cell(summary, 0, 5, "Day range", text_color = quiet, text_size = size.tiny)
+        table.cell(summary, 1, 5, na(low1) or na(high1) ? "Unavailable" : str.tostring(low1, format.mintick) + "–" + str.tostring(high1, format.mintick), text_color = rangeBlue, text_size = size.tiny)
+        table.cell(summary, 0, 6, "Chart / NY date", text_color = quiet, text_size = size.tiny)
+        table.cell(summary, 1, 6, syminfo.tickerid + " · " + str.format_time(time, "yyyyMMdd", "America/New_York") + " · " + timeframe.period, text_color = #DFDCE2, text_size = size.tiny)
+    else
+        table.clear(summary, 0, 0, 1, 6)
