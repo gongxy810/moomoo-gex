@@ -129,7 +129,7 @@ test('missing, partial or changed contracts and expiries never fade',()=>{
   assert.equal(groups({cells:[{expiry:'a',strike:100,call:2,put:null}]},['a'])[0].value,null);
   assert.equal(net({call:0,put:null}),null);assert.equal(net({call:0,put:0}),0);
   const partial=groups({cells:[{expiry:'a',strike:100,call:200,put:-10},{expiry:'b',strike:100,call:null,put:-20}]},['a','b']);
-  assert.equal(walls(partial,100).call,undefined);assert.equal(walls(partial,100).put.strike,100);
+  assert.equal(walls(partial,100).call,undefined);assert.equal(walls(partial,100).put,undefined);
 });
 test('5m cannot use last poll or a future-of-target capture',()=>{
   const now=frame();const old=time=>frame({collectedAt:`2026-11-09T${time}Z`});

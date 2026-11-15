@@ -83,6 +83,10 @@ class ExposureLayer {
     for(const r of this.controlZones??[])ctx.rect(r.x-4,r.y-4,r.width+8,r.height+8);
     ctx.clip('evenodd');
     if(pass==='bottom'){
+      const points=(this.gravity??[]).map(p=>({...p,x:x(p.time),yc:y(p.center),yl:y(p.low),yh:y(p.high)})).filter(p=>p.x!==null&&p.yc!==null&&p.yl!==null&&p.yh!==null);
+      if(points.length>1){ctx.fillStyle='rgba(233,186,72,.08)';ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(p.x,p.yl):ctx.moveTo(p.x,p.yl));[...points].reverse().forEach(p=>ctx.lineTo(p.x,p.yh));ctx.closePath();ctx.fill();ctx.strokeStyle='#e9ba48';ctx.lineWidth=1.5;ctx.setLineDash([]);ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(p.x,p.yc):ctx.moveTo(p.x,p.yc));ctx.stroke();}
+    }
+    if(pass==='bottom'){
       const pane=this.chart.paneSize(),spacing=this.chart.timeScale().options().barSpacing;
       const visible=this.nodes.filter(n=>{const cx=x(n.time),cy=y(n.price);return cx!==null&&cy!==null&&cx>=-8&&cx<=pane.width+8&&cy>=-22&&cy<=pane.height+22;});
       this.hits=nodeGeometry(visible,x,y,spacing,this.scale);

@@ -23,7 +23,7 @@ VERSION = '2026-11-10-replay-validation-v2'
 def source_revision():
     root=Path(__file__).resolve().parent
     return hashlib.sha256(b''.join((root/name).read_bytes() for name in
-        ['opend_board.py','relay.py','market.py','providers.py','snapshots.py','spx_calibration.py','strike_history.py','zero_gamma.py'])).hexdigest()[:16]
+        ['opend_board.py','relay.py','market.py','providers.py','snapshots.py','spx_calibration.py','strike_history.py','exposures.py','zero_gamma.py'])).hexdigest()[:16]
 
 LOADED_REVISION=source_revision()
 
@@ -103,7 +103,7 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                         dates=query.get('expiries',[''])[0].split(',')
                         for value in dates:date.fromisoformat(value)
                         result=feed.store.strike_history(symbol,dates,float(query.get('strike',['nan'])[0]),
-                            query.get('date',[''])[0],query.get('asof',[''])[0])
+                            query.get('date',[''])[0],query.get('asof',[''])[0],query.get('metric',['GEX'])[0])
                         return self.json_response(result,store_ms=(monotonic()-started)*1000)
                     if path.path == '/api/validate':
                         result=feed.validate(symbol)
@@ -143,7 +143,7 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                     category='TIMEOUT' if isinstance(error,TimeoutError) or 'timeout' in message.lower() else 'INVALID_CODE' if any(x in message.lower() for x in ['未知股票','unknown stock','unknown security','invalid stock']) else 'PERMISSION' if any(x in message.lower() for x in ['权限','permission','entitlement']) else 'NO_OPTIONS' if '期权链' in message else 'UNAVAILABLE'
                     print(json.dumps({'event':'request-error','path':path.path,'symbol':symbol,'error':message,'seconds':round(monotonic()-started,3)},ensure_ascii=True),flush=True)
                     return self.json_response({'error':message,'category':category}, 504 if category=='TIMEOUT' else 400 if category=='INVALID_CODE' else 502)
-            assets = {'/', '/index.html', '/app.js', '/model.js', '/chart.js', '/replay.js', '/spx-proxy.js', '/tools.js','/expected.js','/gex-export.js','/style.css',
+            assets = {'/', '/index.html', '/app.js', '/model.js', '/chart.js', '/replay.js', '/spx-proxy.js', '/tools.js','/expected.js','/gex-export.js','/style.css','/structure.js','/v3-ui.js',
                       '/vendor/lightweight-charts.standalone.production.js', '/vendor/NOTICE', '/vendor/LICENSE',
                       '/opend-gex-relay.zip'}
             if path.path == '/favicon.ico':

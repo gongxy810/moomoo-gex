@@ -139,7 +139,7 @@ export class StrikeHoverCard{
     icon.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2 4 14h7l-1 8 10-12h-7z" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>';
     const name=node('div');name.append(node('strong','Strike '+Number(spec.strike).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})),
       node('small',spec.symbol+' · '+spec.expiries.map(d=>d.slice(5)).join(', ')));
-    const badge=node('span',number(value)?negative?'NET SHORT γ':'NET LONG γ':'UNAVAILABLE','strike-hover-badge');
+    const badge=node('span',number(value)?spec.metric==='VEX'?(negative?'NEG VEX':'POS VEX'):(negative?'NET SHORT γ':'NET LONG γ'):'UNAVAILABLE','strike-hover-badge');
     badge.title='Signed OI-based GEX model; not verified dealer holdings';header.append(icon,name,badge);
     const current=node('div','','strike-hover-current');current.append(node('small','CURRENT VALUE'),node('div',money(value),'strike-hover-value'));
     const heading=node('div','','strike-hover-chart-head');heading.append(node('small','VALUE OVER TIME'),node('small','1M / 4H'));
@@ -165,7 +165,7 @@ export class StrikeHoverCard{
       row.append(node('b',entry.label),amount,percent);changes.append(row);
     }
     const time=data.snapshot_at?new Intl.DateTimeFormat('en-GB',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).format(data.snapshot_at)+' ET':'—';
-    const foot=node('div',(spec.replay?'Replay · ':'')+time+' · '+points.length+' samples · OI model','strike-hover-foot');
+    const foot=node('div',(spec.replay?'Replay · ':'')+time+' · '+points.length+' samples · '+(spec.metric==='VEX'?'VEX estimate / 1 vol point':'OI GEX model'),'strike-hover-foot');
     this.card.append(header,current,heading,graph,changes,foot);this.card.dataset.points=points.length;this.position();
   }
 }

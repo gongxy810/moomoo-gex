@@ -9,6 +9,7 @@ files = [root/name for name in ('opend_board.py', 'relay.py', 'market.py', 'snap
 files += [p for p in (root/'web').rglob('*') if p.is_file() and p.suffix != '.zip']
 files.append(root/'strike_history.py')
 files.append(root/'zero_gamma.py')
+files.append(root/'exposures.py')
 files += [p for p in (root/'tradingview').rglob('*') if p.is_file()]
 public_closes = root/'data'/'verified-index-closes.json'
 if public_closes.is_file():

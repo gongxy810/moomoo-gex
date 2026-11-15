@@ -1,6 +1,7 @@
 """Finite local-only history. Missing collection periods are never synthesized."""
 import json
 import sqlite3
+from time import monotonic
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -9,6 +10,7 @@ from spx_calibration import calibration_reference, advance_basis
 from strike_history import hover_payload
 from math import isfinite
 from zero_gamma import zero_gamma
+from exposures import vex_cell
 
 
 class SnapshotStore:
@@ -16,11 +18,14 @@ class SnapshotStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = Lock()
+        self.last_cleanup = float('-inf')
         self.zero_lock,self.zero_cache=Lock(),{}
         with closing(self.connect()) as db, db:
             db.execute('CREATE TABLE IF NOT EXISTS captures (symbol TEXT, at TEXT, frame TEXT, PRIMARY KEY(symbol, at))')
             db.execute("CREATE INDEX IF NOT EXISTS captures_close_idx ON captures(symbol, (julianday(json_extract(frame, '$.sessionClose'))-julianday(at)))")
             db.execute('CREATE TABLE IF NOT EXISTS price_bars (symbol TEXT, at TEXT, bar TEXT, PRIMARY KEY(symbol,at))')
+            db.execute('CREATE INDEX IF NOT EXISTS captures_at_idx ON captures(at)')
+            db.execute('CREATE INDEX IF NOT EXISTS price_bars_at_idx ON price_bars(at)')
             db.execute('CREATE TABLE IF NOT EXISTS price_meta (symbol TEXT PRIMARY KEY, meta TEXT)')
             db.execute('CREATE TABLE IF NOT EXISTS close_archives (symbol TEXT, day TEXT, at TEXT, frame TEXT, PRIMARY KEY(symbol,day))')
             db.execute('CREATE TABLE IF NOT EXISTS spx_basis_states (day TEXT PRIMARY KEY, state TEXT)')
@@ -45,13 +50,27 @@ class SnapshotStore:
         db.executemany('INSERT OR IGNORE INTO strike_samples VALUES (?,?,?,?,?,?)',rows)
         db.execute('INSERT OR IGNORE INTO strike_indexed_captures VALUES (?,?)',(frame['symbol'],frame['collectedAt']))
 
-    def strike_history(self,symbol,expiries,strike,day,asof):
+    def strike_history(self,symbol,expiries,strike,day,asof,metric='GEX'):
         expiries=sorted(set(expiries))
         if not expiries or len(expiries)>12 or not isfinite(strike) or strike<=0:raise ValueError('Invalid strike or expiry selection')
         date=datetime.fromisoformat(day).date()
         cutoff=datetime.fromisoformat(asof.replace('Z','+00:00'))
         if cutoff.tzinfo is None:raise ValueError('Strike history cutoff needs timezone')
         limit=int(cutoff.timestamp()*1000)
+        if metric not in ('GEX','VEX'):raise ValueError('Invalid exposure metric')
+        if metric=='VEX':
+            observations=[]
+            with closing(self.connect()) as db:
+                archived=db.execute("SELECT frame FROM captures WHERE symbol=? AND json_extract(frame,'$.sessionDate')=? AND julianday(at)<=julianday(?) ORDER BY at",(symbol,day,asof))
+                for record, in archived:
+                    frame=json.loads(record);quoted=frame.get('optionLastAt') or frame['collectedAt']
+                    t=int(datetime.fromisoformat(quoted.replace('Z','+00:00')).timestamp()*1000)
+                    if t>limit:continue
+                    cells=[vex_cell(c,frame) for c in frame.get('cells',[]) if c['strike']==strike and c['expiry'] in expiries]
+                    if cells and all(c['complete'] for c in cells):observations.append((max(t,int(datetime.fromisoformat(frame['collectedAt'].replace('Z','+00:00')).timestamp()*1000)),sum(c['call']+c['put'] for c in cells)))
+            payload=hover_payload(symbol,expiries,strike,day,limit,observations)
+            payload.update(metric='VEX',quality='Estimated signed OI VEX / 1 volatility point, r=q=0, ACT/365')
+            return payload
         with self.lock,closing(self.connect()) as db,db:
             progress=db.execute('SELECT through FROM strike_backfill WHERE symbol=? AND day=?',(symbol,day)).fetchone()
             rows=db.execute("SELECT at,frame FROM captures WHERE symbol=? AND json_extract(frame,'$.sessionDate')=? AND at>? AND NOT EXISTS(SELECT 1 FROM strike_indexed_captures i WHERE i.symbol=captures.symbol AND i.at=captures.at) ORDER BY at",(symbol,day,progress[0] if progress else ''))
@@ -77,7 +96,19 @@ class SnapshotStore:
         db.execute('INSERT OR REPLACE INTO spx_basis_states VALUES (?,?)',(day,json.dumps(state,allow_nan=False)))
 
     def connect(self):
-        return sqlite3.connect(self.path, timeout=10)
+        db=sqlite3.connect(self.path, timeout=10)
+        db.execute('PRAGMA journal_mode=WAL')
+        db.execute('PRAGMA busy_timeout=10000')
+        return db
+
+    def cleanup(self,db):
+        now=monotonic()
+        if now-self.last_cleanup<1800:return
+        cutoff=(datetime.now(timezone.utc)-timedelta(days=10)).isoformat(timespec='seconds')
+        for table in ('captures','price_bars'):
+            db.execute(f'DELETE FROM {table} WHERE at < ?',(cutoff,))
+        db.execute('DELETE FROM strike_samples WHERE at < ?',(int((datetime.now(timezone.utc)-timedelta(days=10)).timestamp()*1000),))
+        self.last_cleanup=now
 
     def zero_gamma(self,symbol,expiries,asof,capture=None):
         cutoff=datetime.fromisoformat(asof.replace('Z','+00:00'))
@@ -120,9 +151,7 @@ class SnapshotStore:
                 archived={**compact,'archiveKind':'pre-close observed snapshot','archivedAt':frame['collectedAt']}
                 db.execute('INSERT INTO close_archives VALUES (?,?,?,?) ON CONFLICT(symbol,day) DO UPDATE SET at=excluded.at,frame=excluded.frame WHERE excluded.at>close_archives.at',
                     (frame['symbol'],frame['sessionDate'],frame['collectedAt'],json.dumps(archived,allow_nan=False)))
-            cutoff = (datetime.now(timezone.utc)-timedelta(days=10)).isoformat(timespec='seconds')
-            db.execute('DELETE FROM captures WHERE at < ?', (cutoff,))
-            db.execute('DELETE FROM strike_samples WHERE at < ?',(int((datetime.now(timezone.utc)-timedelta(days=10)).timestamp()*1000),))
+            self.cleanup(db)
 
     def history(self, symbol, limit=2000, day=None):
         with self.lock, closing(self.connect()) as db:
@@ -199,7 +228,7 @@ class SnapshotStore:
                            [(symbol,b['at'],json.dumps(b,allow_nan=False)) for b in bars])
             db.execute('INSERT OR REPLACE INTO price_meta VALUES (?,?)',(symbol,json.dumps(meta,allow_nan=False)))
             cutoff=(datetime.now(timezone.utc)-timedelta(days=10)).isoformat(timespec='seconds')
-            db.execute('DELETE FROM price_bars WHERE at < ?',(cutoff,))
+            self.cleanup(db)
 
     def price_history(self, symbol, start=None, end=None):
         with self.lock, closing(self.connect()) as db:

@@ -1,3 +1,6 @@
+import {v3,installV3,decorateRow,structures} from './v3-ui.js';
+import {activeMetric,metricCell} from './model.js';
+import {classifyNodes,velocityBoard} from './structure.js';
 import { symbols, pollMs, finite, datesFor, nearest, sum, net, groups, king, velocity, nodeCandidates,
   baseline, palette, termPalette, demoFrame, rowVelocity, dayChange, walls, retainHistory, strikeView, viewSettings, aggregateBars } from './model.js';
 import {PriceChart} from './chart.js';
@@ -73,7 +76,7 @@ const tools=new ChartTools({chart,panel:document.querySelector('.chart-panel'),t
   onLatest:()=>{if(state.replayCursor===null)refreshPrice();}});
 const saveColumns=()=>{try{localStorage.setItem('gex-columns',JSON.stringify(state.columns));}catch{}};
 const strikeHover=new StrikeHoverCard({target:$('trinity'),load:spec=>spec.source==='opend'?
-  requestJson('strike-history',spec.symbol,AbortSignal.timeout(30000),{strike:spec.strike,expiries:spec.expiries.join(','),date:spec.date,asof:spec.asof}):
+  requestJson('strike-history',spec.symbol,AbortSignal.timeout(30000),{metric:spec.metric??'GEX',strike:spec.strike,expiries:spec.expiries.join(','),date:spec.date,asof:spec.asof}):
   Promise.resolve({net_gex:spec.net_gex,sparkline_points:[],reason:'Demo · no recorded strike history'})});
 
 const relay = location.hostname==='127.0.0.1'&&location.protocol==='http:'?location.origin:'http://127.0.0.1:8766';
@@ -123,6 +126,7 @@ function viewFor(frame, expiry = state.expiry) {
 function renderLadder(column, data, previous) {
   const symbol=column.symbol;
   const {frame, dates, strikes, shown, peak} = viewFor(data);
+  const rowRoles=classifyNodes(groups(frame,dates),frame?.spot?.value),rowVelocities=velocityBoard(frame,dates,historyFor(symbol));
   const before = new Map(groups(previous, dates).map(row => [row.strike, row]));
   const old = document.querySelector(`[data-ladder="${column.id}"] .ladder-body`);
   const ladder = element('article', '', 'ladder' + (state.focusId === column.id ? ' selected' : ''));
@@ -170,13 +174,14 @@ function renderLadder(column, data, previous) {
     line.dataset.strike=row.strike;
     const metric=rowVelocity(row,before.get(row.strike),dates,previous?dates.filter(d=>previous.dates.includes(d)):[]);
     const move=metric.value;
-    line.__gexHover={symbol,source:state.source,strike:row.strike,expiries:[...dates],net_gex:row.value,date:frame.sessionDate,
+    line.__gexHover={symbol,source:state.source,strike:row.strike,expiries:[...dates],net_gex:row.value,metric:activeMetric,date:frame.sessionDate,
       asof:new Date(state.replayCursor??Date.parse(frame.captureAt??frame.collectedAt)).toISOString(),replay:state.replayCursor!==null};
     const exposure = element('div', '', 'strike-value');
     Object.assign(exposure.style, palette(row.value, min, max));
     exposure.append(element('span',metric.label+(metric.flipped?' ↔':''),'velocity '+tone(move))); 
     exposure.append(element('span', cash(row.value) + (isKing ? ' ★' : ''),'gex-amount'));
     line.append(element('span', px(row.strike), 'strike-price'), exposure);
+    decorateRow(line,row,{symbol,frame,dates,history:historyFor(symbol),bars:latestPrice(frame,symbol)?.bars??[],sourceMinutes:latestPrice(frame,symbol)?.barMinutes??1,cutoff:state.replayCursor??Date.parse(frame.collectedAt),threshold:state.threshold,peak,roles:rowRoles,velocities:rowVelocities});
     contents.append(line);
   }
   body.append(contents);
@@ -265,7 +270,7 @@ function renderChart(view) {
   state.coneCandidate=candidate;
   const history=historyFor(state.symbol).filter(f=>Date.parse(f.collectedAt)<=at);
   const related=state.symbol==='SPXW'&&state.derived?historyFor('SPY'):[];
-  const nodeKey=JSON.stringify([state.symbol,view.dates,state.limit,state.center,state.chartSession,state.candleMinutes,state.nodes,state.derived,state.top,state.threshold,
+  const nodeKey=JSON.stringify([activeMetric,state.symbol,view.dates,state.limit,state.center,state.chartSession,state.candleMinutes,state.nodes,state.derived,state.top,state.threshold,
     replay?at:'live',history.length,history.at(-1)?.collectedAt,related.length,related.at(-1)?.collectedAt]);
   let sampled=state.nodeCache;
   if(sampled?.key!==nodeKey){
@@ -307,14 +312,17 @@ function renderChart(view) {
   }
   const {nodes,trailCount,candidates,loadedSize}=sampled;
   $('derived').textContent=`Derived ${loadedSize}/${selectedSymbols().filter(s=>s==='SPY'&&state.symbol==='SPXW').length}`;
-  const levels=[],annotations=[];
+  const structure=structures(view,history,at);
+  const levels=[...v3.lines.values()].filter(l=>l.symbol===state.symbol),annotations=[];
+  if(v3.gk){if(structure.roles.gatekeeper)levels.push({price:structure.roles.gatekeeper.strike,color:'#f5b754',label:'Gatekeeper',style:2});if(finite(structure.roles.flip))levels.push({price:structure.roles.flip,color:'#c4bbff',label:activeMetric+' Profile Flip',style:2});}
   const zero=zeroGammaFor(frame,view.dates);state.zeroGamma=zero;
   if(zero.available&&zero.roots?.length){
-    levels.push({price:zero.price,color:'#f3f3f6',label:'Zero Gamma',style:WALL_KING_LINE_STYLE,
+    levels.push({price:zero.price,color:'#f3f3f6',label:activeMetric==='VEX'?'GEX Zero Gamma':'Zero Gamma',style:WALL_KING_LINE_STYLE,
       detail:`Estimated Volume Zero Gamma · ${zero.model} · 0DTE ${zero.expiries?.join(', ')} · OpenD Gamma × session Volume · calls + / puts − · ${zero.contracts} captured contracts · linear interpolation · nearest reference ${px(zero.price_reference)} (${zero.price_reference_kind}) · bracket ${zero.selected?.lower.strike} / ${zero.selected?.upper.strike} · ${zero.asof}${proxy?.available?' · SPX proxy axis':''}`});
   }
   $('zero-gamma-status').textContent=zero.available?'╍ Zero Gamma · 0DTE Volume (linear)':zero.loading?'╍ Zero Gamma …':'╍ Zero Gamma —';
   $('zero-gamma-status').title=zero.available?`${zero.definition} · ${JSON.stringify(zero.assumptions)}`:zero.reason;
+  $('chart-title').textContent=$('chart-title').textContent.replace('SPXW GEX','SPXW '+activeMetric);
   $('plot').dataset.zeroGamma=JSON.stringify(zero);
   if(finite(spot?.value))levels.push({price:spot.value,color:label==='Spot'?'#ce8d88':'#bfa56a',label});
   if(view.peak)levels.push({price:view.peak.strike,color:'#d5b754',label:'★ King',style:WALL_KING_LINE_STYLE});
@@ -368,11 +376,13 @@ function renderChart(view) {
   state.pinStats=pinForFrame&&chartHasPrice?pinScore(state.pinned.cone,bars,state.candleMinutes,sourceMinutes,at):null;
   const focusRange=fixed&&finite(fixed.impliedLow1)&&finite(fixed.impliedHigh1)&&fixed.impliedHigh1>fixed.impliedLow1?
     {low:fixed.impliedLow1,high:fixed.impliedHigh1}:null;
-  chart.update({symbol:state.symbol,bars:chartHasPrice?bars:[],minutes:state.candleMinutes,sourceMinutes,at,nodes:chartHasPrice?nodes:[],cone:chartHasPrice&&cone?{...cone,sigmas:state.twoSigma?[1,2]:[1]}:null,
+  if(chart.layer)chart.layer.gravity=structure.gravity;
+  chart.update({symbol:state.symbol,bars:chartHasPrice?bars:[],minutes:state.candleMinutes,sourceMinutes,at,nodes:chartHasPrice?nodes.filter(n=>!v3.hidden.has(state.symbol+'|'+n.strike)):[],cone:chartHasPrice&&cone?{...cone,sigmas:state.twoSigma?[1,2]:[1]}:null,
     focusRange:chartHasPrice?focusRange:null,
     levels:chartHasPrice?priceLevels:[],spot:chartHasPrice?(proxy?.available?{value:bars.at(-1)?.c}:spot):null,replay,session:state.chartSession,sessions:price?.sessions??{[frame?.sessionDate]:frame?.sessionClose},annotations:chartHasPrice?annotations:[],nodeScale:{min:state.nodeMin,max:state.nodeMax,alphaMin:state.nodeAlphaMin,alphaMax:state.nodeAlphaMax},drawingsVisible:state.drawingsVisible,autoScale:state.chartAutoScale,candleStyle:state.candleStyle});
   if(proxy?.available)messages.push(`SPX proxy · SPY × 10 + Basis (${proxy.basis>=0?'+':''}${proxy.basis.toFixed(4)}) · ${proxy.quality} · 到期 ${proxy.referenceExpiry} · 校准 ${proxy.refAt} · SPY K ${proxy.lastBarAt} · 本地近似，非现金指数报价`);
   if(state.symbol==='SPXW'&&!chartHasPrice)messages.push(`SPX 自绘图不可用：${proxy?.reason??'SPX 现金指数与同步推算价均不可用'}；SPXW 原始 Levels 单列`);
+  if(activeMetric==='VEX'&&!groups(frame,view.dates).some(r=>finite(r.value)))messages.push('VEX unavailable: missing observed IV, immutable capture price or verified expiry close; no inferred historical inputs');
   if(frame?.historyUnavailable)messages.push('历史 GEX 不可用：该时点之前没有期权快照');
   if(state.dayRange&&!range)messages.push('Day Range 不可用：缺少前收时可验证的 ATM IV 快照');
   if(state.cone&&!cone)messages.push(state.coneReason);
@@ -428,7 +438,7 @@ function details(view) {
     return;
   }
   const dates = view.frame.dates;
-  const map = new Map(view.frame.cells.map(cell => [cell.expiry+'|'+cell.strike,cell]));
+  const map = new Map(view.frame.cells.map(cell => [cell.expiry+'|'+cell.strike,metricCell(cell,view.frame)]));
   const visible=view.strikes.flatMap(strike=>dates.map(expiry=>{
     const value=net(map.get(expiry+'|'+strike));return {key:expiry+'|'+strike,value};
   })).filter(item=>finite(item.value));
@@ -495,12 +505,13 @@ function render(recenter = false) {
       if (row) entry.body.scrollTop=row.offsetTop+row.offsetHeight/2-entry.body.clientHeight/2;
     }
   }
+  $('export-gex-levels').disabled=activeMetric==='VEX';
   renderChart(view);
   if(globalThis.IntersectionObserver&&!detailsVisible){detailView=view;}else details(view);
   const spot=frame?.spot;
   const data=[['SPOT / REFERENCE',spot ? (spot.current?'':'REF ')+px(spot.value) : '—'],
-    ['NET GEX',cash(sum(view.shown.map(row=>row.value)))],['CALL GEX',cash(sum(view.shown.map(row=>row.call)))],
-    ['PUT GEX',cash(sum(view.shown.map(row=>row.put)))],['KING STRIKE',view.peak ? '★ '+px(view.peak.strike) : '—']];
+    ['NET '+activeMetric,cash(sum(view.shown.map(row=>row.value)))],['CALL '+activeMetric,cash(sum(view.shown.map(row=>row.call)))],
+    ['PUT '+activeMetric,cash(sum(view.shown.map(row=>row.put)))],['KING STRIKE',view.peak ? '★ '+px(view.peak.strike) : '—']];
   $('metrics').replaceChildren(...data.map(([label,value])=>{
     const card=element('div','','metric');
     card.append(element('small',label),element('strong',value,label==='KING STRIKE'?'gold':''));
@@ -904,4 +915,5 @@ if(replayIntervalPicker.list){
   replayIntervalPicker.decorate(heading,footer);
 }
 $('replay-interval-auto').onclick=()=>{state.replayAutoInterval=!state.replayAutoInterval;clock.stepMs=replayStepMinutes()*60000;render();};
+installV3(render,time=>{$('replay-time').value=time;if(!$('replay-date').value)$('replay-date').value=marketDate(Date.now());enterReplayFromInputs();});
 start();

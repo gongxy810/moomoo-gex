@@ -1,3 +1,17 @@
+export let activeMetric='GEX';
+export function setMetric(value){activeMetric=value==='VEX'?'VEX':'GEX';}
+export function metricCell(cell,frame){
+  if(activeMetric!=='VEX')return cell;
+  const at=Date.parse(frame?.captureAt??frame?.collectedAt),spot=(frame?.captureSpot??frame?.spot)?.value;
+  const end=Date.parse(frame?.expiryCloses?.[cell.expiry]??frame?.price?.sessions?.[cell.expiry]??frame?.sessions?.[cell.expiry]??(cell.expiry===frame?.sessionDate?frame?.sessionClose:null));
+  const t=(end-at)/(365*86400000),out={...cell};
+  for(const side of ['call','put']){
+    const iv=cell[side+'Iv']??cell[side+'Quote']?.iv;
+    out[side]=finite(cell[side])&&spot>0&&cell.strike>0&&iv>0&&Number.isFinite(t)&&t>0?
+      cell[side]*(-(Math.log(spot/cell.strike)-.5*iv*iv*t)/iv):null;
+  }
+  out.complete=cell.complete!==false&&finite(out.call)&&finite(out.put);return out;
+}
 export const symbols = ['SPXW', 'SPY', 'QQQ'];
 export const pollMs = 30000;
 export const finite = value => typeof value === 'number' && Number.isFinite(value);
@@ -50,14 +64,14 @@ export function groups(frame, dates, strikes = null) {
   for (const cell of frame?.cells ?? []) {
     if (!dateSet.has(cell.expiry) || (strikeSet && !strikeSet.has(cell.strike))) continue;
     if (!byStrike.has(cell.strike)) byStrike.set(cell.strike, []);
-    byStrike.get(cell.strike).push(cell);
+    byStrike.get(cell.strike).push(metricCell(cell,frame));
   }
   return [...byStrike.entries()].map(([strike, cells]) => {
     const entry = {strike};
     for (const key of ['call', 'put', 'callOi', 'putOi']) entry[key] = sum(cells.map(cell => cell[key]));
-    entry.complete = dates.every(date=>cells.some(c=>c.expiry===date)) && cells.every(c => c.complete !== false && finite(c.call) && finite(c.put));
-    entry.callComplete=dates.every(date=>cells.some(c=>c.expiry===date&&finite(c.call)));
-    entry.putComplete=dates.every(date=>cells.some(c=>c.expiry===date&&finite(c.put)));
+    entry.complete = cells.length>0 && dates.every(date=>cells.some(c=>c.expiry===date)||!frame?.listedStrikes?.[date]?.includes(strike)) && cells.every(c => c.complete !== false && finite(c.call) && finite(c.put));
+    entry.callComplete=entry.complete&&cells.every(c=>finite(c.call));
+    entry.putComplete=entry.complete&&cells.every(c=>finite(c.put));
     entry.contracts = cells.flatMap(c => c.contracts ?? [c.expiry+'|'+c.strike]).sort();
     entry.value = entry.complete ? net(entry) : null;
     entry.oi = sum([entry.callOi, finite(entry.putOi) ? -entry.putOi : null]);

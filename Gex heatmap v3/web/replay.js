@@ -44,7 +44,7 @@ export function frameAt(symbol,history,price,cursor){
   const prior=(price?.dailyCloses??[]).find(d=>d.date===previous)?.close??(price?.previousCloseDate===previous?price.previousClose:null)??(capture?.previousCloseDate===previous?capture.previousClose:null);
   return {...(capture??{}),symbol,source:capture?.source??'opend',priceSymbol:symbol==='SPXW'?'SPX':symbol,
     optionRoot:capture?.optionRoot??(symbol==='SPXW'?'SPXW':'US.'+symbol),sessionDate:day,
-    collectedAt:new Date(cursor).toISOString(),captureAt:capture?.collectedAt??null,
+    collectedAt:new Date(cursor).toISOString(),captureAt:capture?.collectedAt??null,captureSpot:capture?.spot??null,
     previousSession:previous,previousSessionClose:price?.sessions?.[previous]??capture?.previousSessionClose,
     sessionClose:price?.sessions?.[day]??capture?.sessionClose,
     previousClose:prior,previousCloseDate:prior?previous:null,

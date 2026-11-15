@@ -11,11 +11,12 @@ import socket
 import json
 from market import Calendar, ET, iso, quote, stamp, symbol_code, verified_close
 from snapshots import SnapshotStore
+from exposures import vex_cell
 from spx_calibration import calibration_reference
 from providers import OpenDPriceProvider, RoutedPriceProvider
 
 MODEL = 'OI-gamma-100-unadjusted-v1'
-CAPTURE_VERSION = 'gex-collection-volume-v2'
+CAPTURE_VERSION = 'gex-collection-wide-v3'
 SNAPSHOT_INTERVAL = 1.0  # Official quota: 60 calls / 30s, <=400 codes; keep 50% call headroom.
 SNAPSHOT_LOCK = Lock()
 LAST_SNAPSHOT_AT = 0.0
@@ -461,9 +462,11 @@ class OpenDFeed:
             if spot is None:
                 raise RuntimeError('缺少行情权限或有效参考价，无法计算 GEX')
             chosen = {}
-            for expiry in dates:
+            for expiry_index, expiry in enumerate(dates):
                 strikes = {s for e, s, _ in chain.values() if e==expiry}
-                near = set(sorted(strikes, key=lambda s: (abs(s-spot['value']), s))[:60])
+                near = set(sorted(strikes, key=lambda s: (abs(s-spot['value']), s))[:96 if expiry_index < 2 else 68])
+                step = 50 if symbol == 'SPXW' else 10
+                near.update(k for k in strikes if abs(k/spot['value']-1)<=.08 and abs(k/step-round(k/step))<1e-8)
                 chosen.update({c: spec for c, spec in chain.items() if spec[0]==expiry and spec[1] in near})
             rows = []
             stage=monotonic()
@@ -486,6 +489,11 @@ class OpenDFeed:
                     'optionFirstAt': first, 'optionLastAt': last, 'contracts': len(chosen), 'usable': usable,
                     'dates': dates, 'availableDates': available, 'cells': cells, 'bars': price['bars'],
                     'price': price, 'warnings': warnings, 'refreshSeconds': 30, 'pipeline':pipeline, **calendar.payload(start)}
+            frame['expiryCloses']={d:iso(calendar.close(d)) for d in dates if calendar.close(d)}
+            frame['listedStrikes']={d:sorted({k for e,k,_ in chain.values() if e==d}) for d in dates}
+            for cell in cells:
+                vex=vex_cell(cell,frame)
+                cell['callVex'],cell['putVex']=vex['call'],vex['put']
             frame['cacheKey']=cache_identity(frame)
             if symbol == 'SPXW':
                 frame['calibration'] = calibration_reference(cells, frame['collectedAt'],

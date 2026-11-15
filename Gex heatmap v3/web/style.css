@@ -241,3 +241,7 @@ dialog::backdrop {background:#000b}
 .expected-proof {white-space:pre-wrap;overflow-wrap:anywhere;background:#0c0c10;padding:10px;max-height:320px;overflow:auto;font:11px/1.6 var(--mono)}
 .chart-tool-dialog .tool-setting input[type=number] {width:120px;background:#101014;color:var(--text);border:1px solid var(--line);padding:5px}
 #pin {display:none}
+
+#v3-structure{padding:10px 18px;color:#d7b54e;background:#111116;border:1px solid #2b2933;font:12px monospace;line-height:1.8}.node-role{font:9px monospace;color:#e9ba48;position:absolute;right:5px;bottom:0;pointer-events:none}.strike-row{position:relative}.v3-context{position:fixed;z-index:10000;background:#13141a;color:#eee;padding:12px;border:1px solid #66502c;border-radius:10px;max-width:300px;font:12px monospace}.v3-context button{display:block;width:100%;margin-top:5px}.v3-context p{line-height:1.6}button[aria-pressed=true]{border-color:#c6a242;color:#facc51;background:#292311}
+
+.node-role{display:none;background:#17171f;padding:2px 4px;z-index:4;bottom:auto;top:-12px;right:0;white-space:nowrap}.strike-row:hover .node-role,.strike-row:focus .node-role{display:block}

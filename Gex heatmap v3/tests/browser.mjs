@@ -30,6 +30,7 @@ const hoverOnly=process.argv.includes('--strike-hover');
 const sessionsOnly=process.argv.includes('--sessions');
 const historyPan=process.argv.includes('--history-pan');
 const zeroOnly=process.argv.includes('--zero-gamma');
+const v3Only=process.argv.includes('--v3');
 const design=process.argv.includes('--design');
 const compareOnly=process.argv.includes('--compare');
 const designData=design?JSON.parse(await readFile('tests/browser-artifacts/design-market.json','utf8')):null;
@@ -125,7 +126,7 @@ const server=createServer(async(req,res)=>{
     const types={'.js':'text/javascript','.css':'text/css','.html':'text/html'};
     let data=design&&process.argv.includes('--before')&&designData.assets[path.slice(1)]?Buffer.from(designData.assets[path.slice(1)]):await readFile(resolve('web','.'+path));
     if(design&&process.argv.includes('--before')&&path==='/chart.js')data=Buffer.from(data.toString()+'\nPriceChart.prototype.setControlZones=function(){};\n');
-    if((design||corner||derivedOnly||rangeOnly||cashOnly||axisOnly||focusSwitch||replayOnly||hoverOnly||sessionsOnly||historyPan||zeroOnly)&&path==='/app.js')data=Buffer.from(data.toString().replace("const chart=new PriceChart($('plot'));","const chart=new PriceChart($('plot'));globalThis.__designChart=chart;globalThis.__testState=state;globalThis.__testRender=()=>render();globalThis.__testRefresh=()=>Promise.all([refresh(),refreshPrice()]);"));
+    if((design||corner||derivedOnly||rangeOnly||cashOnly||axisOnly||focusSwitch||replayOnly||hoverOnly||sessionsOnly||historyPan||zeroOnly||v3Only)&&path==='/app.js')data=Buffer.from(data.toString().replace("const chart=new PriceChart($('plot'));","const chart=new PriceChart($('plot'));globalThis.__designChart=chart;globalThis.__testState=state;globalThis.__testRender=()=>render();globalThis.__testRefresh=()=>Promise.all([refresh(),refreshPrice()]);"));
     if(design&&process.argv.includes('--before')&&path==='/index.html')data=Buffer.from(data.toString().replace('<option>20</option><option>30</option><option selected>40</option><option>50</option><option>60</option>','<option>20</option><option selected>39</option><option>60</option>'));
     if(design&&compareOnly&&path==='/index.html')data=Buffer.from(data.toString().replace('</head>','<style>#plot{width:690px!important;height:480px!important;min-height:480px!important;max-height:480px!important;flex:none!important}</style></head>'));
     if(path==='/app.js')data=Buffer.from(data.toString().replace("const relay = 'http://127.0.0.1:8766';","const relay = location.origin;"));
@@ -160,7 +161,27 @@ try{
   if(!live)await send('Page.addScriptToEvaluateOnNewDocument',{source:design?`Date.now=()=>${designData.at};`:"Date.now=()=>Date.parse('2026-11-09T18:01:00Z');"});
   await send('Page.navigate',{url:live?'http://127.0.0.1:8766/':`http://127.0.0.1:${server.address().port}`});
   await until("document.querySelectorAll('.ladder').length===3 && document.querySelectorAll('#plot canvas').length>0 && ("+(live?"true":"document.querySelector('#feed-state').textContent!=='Refreshing'")+")");
-  if(zeroOnly){
+  if(v3Only){
+    await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click()");
+    if(live){await evaluate("document.querySelector('#replay-date').value='2026-11-13';document.querySelector('#replay-time').value='15:30';document.querySelector('#replay-form').requestSubmit()");}
+    await until("document.querySelectorAll('[data-metric=GEX]').length>5");
+    await evaluate("document.querySelector('#v3-metric').click()");
+    await until("document.querySelectorAll('[data-metric=VEX]').length>5");
+    await evaluate("document.querySelector('#v3-percent').click();document.querySelector('#v3-dim').click();document.querySelector('#v3-gravity').click();document.querySelector('#v3-gk').click()");
+    assert.ok(await evaluate("document.querySelector('.gex-amount').textContent.includes('King')"));
+    await evaluate("document.querySelector('.strike-row').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:300}))");
+    assert.ok(await evaluate("document.querySelector('#v3-context').textContent.includes('Raw')"));
+    await evaluate("document.querySelector('#v3-context button').click()");
+    assert.ok(await evaluate("document.querySelector('.node-role').textContent.includes('\\u2316')"));
+    await evaluate("document.querySelector('#replay-date').value='"+(live?'2026-11-13':'2026-11-09')+"';[...document.querySelectorAll('#replay-form button')].find(b=>b.textContent==='12:00 Noon').click()");
+    await until("document.querySelector('#replay-time').value==='12:00'");
+    assert.equal(Number(await evaluate("document.querySelector('#plot').dataset.cursor")),Date.parse(live?'2026-11-13T17:00:00Z':'2026-11-09T17:00:00Z'));
+    await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'G',shiftKey:true,bubbles:true}))");
+    await until("document.querySelectorAll('[data-metric=GEX]').length>5");
+    const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,live?'v3-live.png':'v3-features.png'),Buffer.from(shot.data,'base64'));
+    assert.deepEqual(exceptions,[]);console.log('V3 controls, metric, context menu, Replay cutoff and keyboard verified');
+  }
+  else if(zeroOnly){
     await evaluate(`document.querySelector('#symbols button[data-symbol=${process.argv.includes('--spxw')?'SPXW':'SPY'}]').click()`);
     await until("JSON.parse(document.querySelector('#plot').dataset.zeroGamma||'{}').available===true");
     if(live){
