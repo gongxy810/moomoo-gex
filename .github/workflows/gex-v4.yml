@@ -1,0 +1,46 @@
+name: Test V4 and stage its UI for the hosted board
+on:
+  push:
+    branches: [main]
+    paths: ['Gex heatmap v4/**', '.github/workflows/gex-v4.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: gex-v4-release
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+        working-directory: Gex heatmap v4
+      - run: npm test
+        working-directory: Gex heatmap v4
+      - run: python -m unittest discover -s tests -p 'test_*.py'
+        working-directory: Gex heatmap v4
+      - name: Deploy V4 web with the current data backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          worktree="$RUNNER_TEMP/gex-v4-deploy"
+          git worktree add --detach "$worktree" "$GITHUB_SHA"
+          test -d "$worktree/Gex heatmap v3/web"
+          test -d "$GITHUB_WORKSPACE/Gex heatmap v4/web"
+          rsync -a --delete "$GITHUB_WORKSPACE/Gex heatmap v4/web/" "$worktree/Gex heatmap v3/web/"
+          git -C "$worktree" add -A -- 'Gex heatmap v3/web'
+          git -C "$worktree" -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m 'Deploy V4 dashboard UI with the current data backend'
+          git -C "$worktree" tag -f gex-v3-tested HEAD
+          git -C "$worktree" push origin refs/tags/gex-v3-tested --force

@@ -1,0 +1,22 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "GEX v4: Publish to GitHub",
+      "type": "process",
+      "command": "C:\\Users\\gxy\\Downloads\\opend-gex-relay\\.venv\\Scripts\\python.exe",
+      "args": ["${workspaceFolder}/cloud/publish.py"],
+      "problemMatcher": [],
+      "group": {"kind": "build", "isDefault": true}
+    },
+    {
+      "label": "GEX v4: Auto-sync saved changes",
+      "type": "process",
+      "command": "C:\\Users\\gxy\\Downloads\\opend-gex-relay\\.venv\\Scripts\\python.exe",
+      "args": ["${workspaceFolder}/cloud/publish.py", "--watch"],
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": {"reveal": "silent", "panel": "dedicated"}
+    }
+  ]
+}
