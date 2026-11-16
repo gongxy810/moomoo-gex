@@ -25,7 +25,7 @@ saveView();
 const defaults=[{id:'left',symbol:'SPXW'},{id:'middle',symbol:'SPY'},{id:'right',symbol:'QQQ'}];
 try {const saved=JSON.parse(localStorage.getItem('gex-columns'));state.columns=Array.isArray(saved)&&saved.length===3&&saved.every((c,i)=>c.id===defaults[i].id&&typeof c.symbol==='string'&&/^[A-Z0-9._-]{1,25}$/.test(c.symbol))?saved:defaults.map(c=>({...c}));}catch{state.columns=defaults.map(c=>({...c}));}
 state.symbol=state.columns[0].symbol;
-Object.assign(state,{focusId:'left',histories:{},prices:{},candleMinutes:5,chartMode:'gex',nodes:true,top:5,threshold:10,walls:true,dayRange:false,twoSigma:false});
+Object.assign(state,{focusId:'left',histories:{},prices:{},candleMinutes:5,chartMode:'gex',nodes:true,top:5,threshold:10,walls:true,dayRange:true,twoSigma:false});
 Object.assign(state,{replayCursor:null,replayHistories:{},replayPending:new Set(),replayDateOrder:[],priceHistory:{},placeholders:{},columnStatus:{},columnVersions:{},
   chartSession:'ALL',drawingsVisible:true,nodeMin:2,nodeMax:8,nodeAlphaMin:.30,nodeAlphaMax:.85,supportedPeriods:[1,2,5,15],requests:[],sourceGeneration:0,captureStatus:{},priceStatus:{},replayRequestVersions:{},replayWindowBounds:{},historyBounds:{},historyPending:{}});
 Object.assign(state,{expectedProvider:'OpenD',expectedHorizon:'today',tempest:{},fixedRanges:[],chartAutoScale:true,candleStyle:'classic'});

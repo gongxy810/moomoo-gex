@@ -28,6 +28,7 @@ class CloudAnalysis:
                 record=db.execute('SELECT frame FROM captures WHERE symbol=? AND at=? AND julianday(at)<=julianday(?)',(symbol,capture,asof)).fetchone()
                 if not record:return {'available':False,'reason':'No complete capture before cutoff'}
                 frame=json.loads(record[0])
+                frame['expiryCloses']={**(frame.get('price') or {}).get('sessions',{}),**frame.get('expiryCloses',{})}
                 if frame.get('optionLastAt') and datetime.fromisoformat(frame['optionLastAt'].replace('Z','+00:00'))>at:
                     return {'available':False,'reason':'Option data is after the Replay cutoff'}
                 history_end=at
@@ -41,8 +42,15 @@ class CloudAnalysis:
                 for raw, in records:
                     f=json.loads(raw)
                     if f.get('optionLastAt') and datetime.fromisoformat(f['optionLastAt'].replace('Z','+00:00'))>at:continue
+                    f['expiryCloses']={d:closing for d,closing in {**(f.get('price') or {}).get('sessions',{}),**f.get('expiryCloses',{})}.items() if d in dates}
                     f.pop('price',None);f.pop('bars',None);f.pop('listedStrikes',None)
-                    f['cells']=[{k:v for k,v in c.items() if k in ('strike','expiry','call','put','callOi','putOi','callIv','putIv','complete','contracts')} for c in f.get('cells',[]) if c['expiry'] in dates]
+                    cells=[]
+                    for c in f.get('cells',[]):
+                        if c['expiry'] not in dates:continue
+                        cell={k:v for k,v in c.items() if k in ('strike','expiry','call','put','callOi','putOi','callIv','putIv','complete','contracts')}
+                        for side in ('call','put'):cell[side+'Iv']=c.get(side+'Iv') or (c.get(side+'Quote') or {}).get('iv')
+                        cells.append(cell)
+                    f['cells']=cells
                     history.append(f)
             price=self.store.price_history(symbol,(at-timedelta(days=1)).isoformat() if scope=='ladder' else start,asof)
             payload={'frame':frame,'dates':dates,'history':history,'bars':price['bars'],'at':at.timestamp()*1000,'metric':metric,'minutes':minutes,'top':top,'threshold':threshold,'session':session,'scope':scope}

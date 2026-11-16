@@ -38,7 +38,7 @@ export function structures(view,history,cutoff,remote=null,cloud=false){
   const board=document.querySelector('#v3-structure');
   if(board){const names=[['King',roles.peak],['Gatekeeper',roles.gatekeeper],['Ceiling',roles.ceiling],['Floor',roles.floor]].map(([n,r])=>n+' '+(r?.strike??'—')).join(' · ');
     const legend=(document.querySelectorAll?.('.chart-key > span')??[]);if(legend[0])legend[0].innerHTML='<i class=yellow></i> +'+activeMetric;if(legend[1])legend[1].innerHTML='<i class=purple></i> -'+activeMetric;
-    const toggle=document.querySelector('#v3-metric');if(toggle){toggle.textContent=activeMetric;toggle.title='VEX: local signed OI estimate per 1 absolute vol point; r=q=0 ACT/365. Missing expiry IV/time = unavailable';toggle.setAttribute('aria-pressed',activeMetric==='VEX');}
+    const toggle=document.querySelector('#v3-metric');if(toggle){toggle.textContent='GEX / VEX · '+activeMetric;toggle.title='Click to switch GEX / VEX. VEX: local signed OI estimate per 1 absolute vol point; r=q=0 ACT/365. Missing expiry IV/time = unavailable';toggle.setAttribute('aria-pressed',activeMetric==='VEX');}
     const vw=document.querySelector('#v3-gravity');if(vw)vw.textContent=activeMetric+' VWAP';
     board.textContent=activeMetric+' · '+names+' · Profile Flip '+(roles.flip?.toFixed(2)??'—')+' | Top Movers | growing: '+velocity.up.map(e=>e.strike).join(', ')+' | shrinking: '+velocity.down.map(e=>e.strike).join(', ');
     board.title='Local rules: King=max absolute exposure; Gatekeeper=nearest ≥10% King; Ceiling/Floor=strongest above/below reference; Air Pocket=≥2 contiguous <3% King rows. Halo=at least 2 of 1/5/15/30m magnitude changes ≥3% in the same direction. Changes are exposure magnitude, not proven position additions.';}

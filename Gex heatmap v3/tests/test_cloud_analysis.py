@@ -7,6 +7,13 @@ from cloud_analysis import CloudAnalysis
 from test_zero_gamma import fixture,AT,EXP,END
 
 class CloudTests(unittest.TestCase):
+    def test_old_archives_keep_verified_expiry_times_and_quote_iv_for_vex(self):
+        with TemporaryDirectory() as folder:
+            store=SnapshotStore(Path(folder)/'s.db');f=fixture()
+            f.pop('expiryCloses',None);f['price']={'sessions':{EXP:END}}
+            store.save(f)
+            result=CloudAnalysis(store).compute('SPY',[EXP],AT,AT,'VEX',5,5,10,'ALL')
+            self.assertTrue(result['available']);self.assertTrue(result['nodes'])
     def test_busy_analysis_has_no_obsolete_work_queue_and_cached_answers_stay_readable(self):
         engine=CloudAnalysis(None);entered=Event();release=Event()
         def slow(*args):entered.set();release.wait(2);return {'available':True}
