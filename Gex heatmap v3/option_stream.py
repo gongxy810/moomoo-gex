@@ -5,9 +5,9 @@ from market import stamp, ET
 
 
 class PriceTickerStream:
-    """Small independent cache of actual underlying trades, no DataFrames."""
+    """Independent actual trades and official 1m candles, no DataFrames."""
     def __init__(self,sdk,ctx):
-        self.lock=Lock();self.ticks={};owner=self
+        self.lock=Lock();self.ticks={};self.bars={};owner=self
         class Handler(sdk.TickerHandlerBase):
             def on_recv_rsp(self,rsp_pb):
                 if rsp_pb.retType!=sdk.RET_OK:return rsp_pb.retType,rsp_pb.retMsg
@@ -16,6 +16,15 @@ class PriceTickerStream:
                 owner.receive(code,[{'time':t.time,'price':t.price} for t in rsp_pb.s2c.tickerList])
                 return sdk.RET_OK,None
         self.handler=Handler();ctx.set_handler(self.handler)
+        class BarHandler(sdk.CurKlineHandlerBase):
+            def on_recv_rsp(self,rsp_pb):
+                if rsp_pb.retType!=sdk.RET_OK:return rsp_pb.retType,rsp_pb.retMsg
+                if rsp_pb.s2c.klType!=1:return sdk.RET_OK,None
+                from moomoo.common.utils import merge_qot_mkt_stock_str
+                code=merge_qot_mkt_stock_str(int(rsp_pb.s2c.security.market),rsp_pb.s2c.security.code)
+                owner.receive_bars(code,rsp_pb.s2c.klList)
+                return sdk.RET_OK,None
+        self.bar_handler=BarHandler();ctx.set_handler(self.bar_handler)
 
     def receive(self,code,ticks):
         now=datetime.now(timezone.utc)
@@ -32,6 +41,20 @@ class PriceTickerStream:
         with self.lock:
             record=self.ticks.get(code)
             return dict(record[1]) if record else None
+
+    def receive_bars(self,code,bars):
+        now=datetime.now(timezone.utc)
+        with self.lock:
+            target=self.bars.setdefault(code,{})
+            for bar in bars:
+                at=stamp(bar.time);values=(bar.openPrice,bar.highPrice,bar.lowPrice,bar.closePrice)
+                if bar.isBlank or at is None or at>now or not all(v>0 for v in values):continue
+                target[at]={'at':at.isoformat(timespec='seconds'),'o':values[0],'h':values[1],'l':values[2],'c':values[3]}
+            for key in sorted(target)[:-120]:del target[key]
+            while len(self.bars)>64:self.bars.pop(next(iter(self.bars)))
+
+    def get_bars(self,code):
+        with self.lock:return [dict(v) for _,v in sorted(self.bars.get(code,{}).items())]
 
 
 class OptionStream:

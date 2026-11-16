@@ -339,6 +339,11 @@ class OpenDFeed:
         tick=ticks.get(code) if ticks else None
         calendar=feed.calendars.get((code.split('.')[0],str(now.astimezone(ET).date())))
         daily=feed.daily_cache.get(code)
+        if ticks and calendar:
+            live_bars=[{**bar,'phase':calendar.phase(stamp(bar['at']))} for bar in ticks.get_bars(code)]
+            if live_bars:
+                merged=sorted({bar['at']:bar for bar in [*price.get('bars',[]),*live_bars]}.values(),key=lambda bar:bar['at'])[-2000:]
+                price={**price,'bars':merged,'barAt':merged[-1]['at'],'barMinutes':1,'candleSource':'OpenD subscribed K_1M'}
         if tick and calendar and 0<=(now-stamp(tick['time'])).total_seconds()<=15:
             spot=quote(symbol,{},[tick],now,calendar,daily[1] if daily else [])
             if spot['current'] and (not price.get('spot') or stamp(spot['at'])>=stamp(price['spot']['at'])):
@@ -381,7 +386,7 @@ class OpenDFeed:
             pipeline['spot']=round(monotonic()-stage,3)
             try:
                 stage=monotonic()
-                self.subscribe(code, self.sdk.SubType.K_1M)
+                self.subscribe(code, self.sdk.SubType.K_1M,push=True)
                 raw_bars = self.records(self.ctx.get_cur_kline, code, 1000, ktype=self.sdk.KLType.K_1M, autype=self.sdk.AuType.NONE)
                 for b in raw_bars:
                     at = stamp(b.get('time_key'))
@@ -578,13 +583,14 @@ class SnapshotManager:
         self.priority_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-focus')
         self.latest={};self.jobs={};self.status={};self.price_latest={};self.price_jobs={};self.price_status={}
         self.stream_versions={}
+        self.visible={}
         self.price_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-price')
         self.always=set(watched) if os.environ.get('GEX_CLOUD')=='1' else set()
         self.watched={symbol:monotonic() for symbol in watched}
         self.closed=False
         self.timer=Thread(target=self._poll,name='gex-scheduler',daemon=True);self.timer.start()
-        for symbol in watched:self.request_price(symbol)
-        for symbol in watched:self.request(symbol)
+        for symbol in watched:self.request_price(symbol,observe=False)
+        for symbol in watched:self.request(symbol,observe=False)
 
     def _poll(self):
         while not self.closed:
@@ -630,7 +636,8 @@ class SnapshotManager:
 
     def request(self, symbol, force=False, observe=True):
         with self.lock:
-            if observe:self.watched[symbol]=monotonic()
+            if observe:self.watched[symbol]=monotonic();self.visible[symbol]=monotonic()
+            interactive=monotonic()-self.visible.get(symbol,float('-inf'))<10
             if symbol not in self.latest:
                 frame=self.feed.store.latest(symbol)
                 if frame and frame.get('model')==MODEL and frame.get('symbol')==symbol and frame.get('optionRoot') and frame.get('dates') and all(frame.get('cacheKey',cache_identity(frame)).get(k)==cache_identity(frame).get(k) for k in ('symbol','optionRoot','dates','model')):
@@ -644,7 +651,7 @@ class SnapshotManager:
             needs_expiry=bool(requested and requested in frame.get('availableDates',[]) and requested not in frame.get('dates',[]))
             if state.get('phase')=='error' and monotonic()-state.get('finishedMono',0)<30:needs_expiry=False
             if job and not job.done():
-                if (force or needs_expiry) and not job.running() and job.cancel():
+                if (force or needs_expiry or interactive) and not job.running() and job.cancel():
                     self.jobs[symbol]=self.priority_pool.submit(self._collect,symbol,True)
                 return self._response(symbol)
             force=force or needs_expiry
@@ -655,7 +662,7 @@ class SnapshotManager:
             if force or triggered or not state or elapsed>=self.interval:
                 self.stream_versions[symbol]=version
                 self.status[symbol]={**state,'phase':'collecting','startedAt':iso(datetime.now(timezone.utc))}
-                pool=self.priority_pool if force else self.pool
+                pool=self.priority_pool if force or interactive else self.pool
                 self.jobs[symbol]=pool.submit(self._collect,symbol,force or triggered)
             return self._response(symbol)
 
@@ -679,6 +686,7 @@ class SnapshotManager:
                 self.status[symbol]={'phase':'error','finishedAt':iso(datetime.now(timezone.utc)),
                     'finishedMono':monotonic(),'captureSeconds':round(monotonic()-started,3),'error':str(error)}
         print(json.dumps({'event':'background-capture','symbol':symbol,**{k:v for k,v in self.status[symbol].items() if k!='finishedMono'}},ensure_ascii=True),flush=True)
+        sleep(.01)  # Yield the shared SDK lock to a waiting foreground/archive worker.
 
     def close(self):
         self.closed=True;self.timer.join();self.pool.shutdown(wait=True,cancel_futures=True);self.priority_pool.shutdown(wait=True,cancel_futures=True);self.price_pool.shutdown(wait=True,cancel_futures=True)
