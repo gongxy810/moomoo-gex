@@ -3,12 +3,14 @@
 Use --watch for save-to-GitHub synchronization (20s debounce). Authentication is
 handled by Git Credential Manager, never by a token in project files.
 """
-import argparse,fnmatch,hashlib,os,re,shutil,subprocess,time
+import argparse,fnmatch,hashlib,os,re,shutil,subprocess,time,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 PATTERNS=[s.strip() for s in (ROOT/'.gitignore').read_text().splitlines() if s.strip() and not s.startswith('#')]
 def execute(*args,**kwargs):
     if os.name=='nt':kwargs.setdefault('creationflags',subprocess.CREATE_NO_WINDOW)
+    if sys.stdout is not None and sys.stdout.fileno()!=1:
+        kwargs.setdefault('stdout',sys.stdout);kwargs.setdefault('stderr',sys.stderr)
     return subprocess.run(*args,**kwargs)
 def sources():
     for parent,dirs,files in os.walk(ROOT):

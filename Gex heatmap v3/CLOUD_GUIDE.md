@@ -1,6 +1,9 @@
 # V3 hybrid cloud deployment
 
 The private board is https://instance-20261115-035258.tail29d8e5.ts.net/ .
+The legacy Windows URL http://127.0.0.1:8766/ redirects to this cloud board;
+the local redirect process performs no financial calculations or data reads.
+Source auto-sync and the tested-release cloud timer are enabled for this v3 project.
 Connect the viewing computer/phone to the same Tailscale network. The API and
 website share this origin. The server still listens only on 127.0.0.1:8766.
 
