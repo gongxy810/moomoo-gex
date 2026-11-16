@@ -549,6 +549,9 @@ class SnapshotManager:
         watched = default_history_symbols() if watched is None else watched
         self.feed,self.interval=feed,interval
         self.lock=RLock();self.pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-capture')
+        # Interactive work can bypass queued archival roots. OpenDFeed.lock still
+        # serializes SDK chain reads; a running capture is always joined.
+        self.priority_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-focus')
         self.latest={};self.jobs={};self.status={};self.price_latest={};self.price_jobs={};self.price_status={}
         self.stream_versions={}
         self.price_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-price')
@@ -610,8 +613,16 @@ class SnapshotManager:
                     mirror=getattr(self.feed,'mirror',None)
                     if mirror:mirror.submit(frame)
             job=self.jobs.get(symbol)
-            if job and not job.done():return self._response(symbol)
             state=self.status.get(symbol,{})
+            requested=getattr(self.feed,'requested_expiries',{}).get(symbol)
+            frame=self.latest.get(symbol,{})
+            needs_expiry=bool(requested and requested in frame.get('availableDates',[]) and requested not in frame.get('dates',[]))
+            if state.get('phase')=='error' and monotonic()-state.get('finishedMono',0)<30:needs_expiry=False
+            if job and not job.done():
+                if (force or needs_expiry) and not job.running() and job.cancel():
+                    self.jobs[symbol]=self.priority_pool.submit(self._collect,symbol,True)
+                return self._response(symbol)
+            force=force or needs_expiry
             stream=getattr(self.feed,'option_stream',None)
             version=stream.version(symbol) if stream else 0
             elapsed=monotonic()-state.get('finishedMono',0)
@@ -619,7 +630,8 @@ class SnapshotManager:
             if force or triggered or not state or elapsed>=self.interval:
                 self.stream_versions[symbol]=version
                 self.status[symbol]={**state,'phase':'collecting','startedAt':iso(datetime.now(timezone.utc))}
-                self.jobs[symbol]=self.pool.submit(self._collect,symbol,force or triggered)
+                pool=self.priority_pool if force else self.pool
+                self.jobs[symbol]=pool.submit(self._collect,symbol,force or triggered)
             return self._response(symbol)
 
     def _response(self,symbol):
@@ -644,4 +656,4 @@ class SnapshotManager:
         print(json.dumps({'event':'background-capture','symbol':symbol,**{k:v for k,v in self.status[symbol].items() if k!='finishedMono'}},ensure_ascii=True),flush=True)
 
     def close(self):
-        self.closed=True;self.timer.join();self.pool.shutdown(wait=True,cancel_futures=True);self.price_pool.shutdown(wait=True,cancel_futures=True)
+        self.closed=True;self.timer.join();self.pool.shutdown(wait=True,cancel_futures=True);self.priority_pool.shutdown(wait=True,cancel_futures=True);self.price_pool.shutdown(wait=True,cancel_futures=True)
