@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from threading import Event
 from time import monotonic, sleep
 import json
@@ -10,7 +11,7 @@ from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from functools import partial
 from unittest.mock import patch
-from market import Calendar, quote, symbol_code
+from market import Calendar, quote, symbol_code, iso
 from relay import contracts_from_chain, summarize, implied_reference, OpenDFeed, SnapshotManager, MODEL, cache_identity, supplemental_close, default_history_symbols
 from snapshots import SnapshotStore
 from opend_board import handler, PRIVATE_ORIGIN
@@ -20,6 +21,26 @@ def dt(s):
     return datetime.fromisoformat(s.replace('Z','+00:00')).astimezone(timezone.utc)
 
 class MarketTests(unittest.TestCase):
+    def test_short_live_buffer_cannot_remove_previously_repaired_candles(self):
+        from types import SimpleNamespace
+        from datetime import timedelta
+        now=datetime.now(timezone.utc).replace(second=0,microsecond=0)
+        day=now.astimezone(ZoneInfo('America/New_York')).date()
+        calendar=Calendar([{'time':str(day),'trade_date_type':'WHOLE'},{'time':str(day-timedelta(days=1)),'trade_date_type':'WHOLE'}])
+        old={'at':iso(now-timedelta(minutes=1)),'o':100,'h':101,'l':99,'c':100}
+        with tempfile.TemporaryDirectory() as folder:
+            feed=OpenDFeed(store=SnapshotStore(Path(folder)/'s.db'),price_only=True)
+            feed.ctx=SimpleNamespace(get_cur_kline='bars')
+            feed.sdk=SimpleNamespace(SubType=SimpleNamespace(K_1M='1m'),KLType=SimpleNamespace(K_1M='1m'),AuType=SimpleNamespace(NONE='NONE'))
+            feed.price_cache['SPY']=(monotonic()-121,{'collectedAt':iso(now-timedelta(minutes=3)),'bars':[old]})
+            feed.connect=lambda:None;feed.calendar=lambda *args:calendar;feed.daily=lambda *args:[]
+            feed.spot=lambda *args:{'value':102,'at':iso(now),'previousClose':100,'previousCloseDate':str(day-timedelta(days=1))}
+            feed.subscribe=lambda *args,**kwargs:None
+            feed.records=lambda *args,**kwargs:[{'time_key':now.astimezone(ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M:%S'),'open':101,'high':103,'low':100,'close':102}]
+            feed.repair_intraday=lambda code,rows,now:(rows,None)
+            result=feed._opend_price('SPY')
+            self.assertEqual([r['c'] for r in result['bars']],[100,102])
+
     def test_reconnect_repairs_missing_minutes_without_inventing_gex(self):
         from types import SimpleNamespace
         with tempfile.TemporaryDirectory() as folder:
