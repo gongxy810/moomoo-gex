@@ -163,6 +163,13 @@ try{
   await send('Page.navigate',{url:live?liveUrl:`http://127.0.0.1:${server.address().port}`});
   await until("document.querySelectorAll('.ladder').length===3 && document.querySelectorAll('#plot canvas').length>0 && ("+(live?"true":"document.querySelector('#feed-state').textContent!=='Refreshing'")+")");
   if(v3Only){
+    await evaluate("document.querySelector('[data-ladder=middle] .symbol-picker').click()");
+    await until("document.querySelectorAll('.symbol-list-head > span').length===4");
+    assert.ok(await evaluate("document.querySelectorAll('.symbol-list-row').length>=11"));
+    await evaluate("document.querySelector('#symbol-input').value='NVDA';document.querySelector('#symbol-input').dispatchEvent(new Event('input'))");
+    assert.equal(await evaluate("document.querySelectorAll('.symbol-list-row').length"),1);
+    const pickerShot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,'symbol-watchlist.png'),Buffer.from(pickerShot.data,'base64'));
+    await evaluate("document.querySelector('#symbol-dialog').close()");
     await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click()");
     if(live){await evaluate("document.querySelector('#replay-date').value='2026-11-13';document.querySelector('#replay-time').value='15:30';document.querySelector('#replay-form').requestSubmit()");}
     await until("document.querySelectorAll('[data-metric=GEX]').length>5");

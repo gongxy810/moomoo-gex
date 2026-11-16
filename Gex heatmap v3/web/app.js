@@ -210,12 +210,14 @@ function renderLadder(column, data, previous) {
     const y=spotPosition(strikes,value,20);if(y===null)continue;
     const marker=element('div','','structure-marker');marker.style.top=y+'px';
     marker.dataset.roles=names.join(' / ');marker.dataset.price=value;
-    marker.append(element('span',names.join(' / ')+' '+px(value)));contents.append(marker);
+    const label=element('span',names.join(' / ')+' '+px(value));
+    if(position!==null&&Math.abs(position-y)<10)label.style.top='-18px';
+    marker.append(label);contents.append(marker);
   }
   const progress=state.replayCursor===null?state.columnStatus[column.id]:null;
   if(progress?.symbol===symbol&&progress.phase==='loading')status.append(element('span','加载期权链…','loading-column'));
   if(!shown.length){
-    const message=(state.replayCursor===null?state.errors[symbol]:null)??(frame?.historyUnavailable?'历史 GEX 不可用':!dates.length?(state.expiry==='0dte'?`${symbol} 无 0DTE`:'该到期日无数据'):
+    const message=(state.replayCursor===null?state.errors[symbol]:null)??(frame?.historyUnavailable?'历史 GEX 不可用':!dates.length?(state.expiry==='0dte'?`${symbol} 无 0DTE`:frame?.availableDates?.includes(state.expiry)&&state.replayCursor===null?'远期期权快照按需加载中…':'该到期日没有已存快照'):
       progress?.phase==='loading'?'正在加载该到期日的期权快照…':'该到期日期权快照不可用，请检查期权行情权限');
     empty(body,message);
     if(state.expiry==='0dte'&&!dates.length){const front=element('button','Front 最近到期');front.onclick=()=>{state.expiry='front';render();};body.append(front);}

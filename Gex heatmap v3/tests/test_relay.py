@@ -20,6 +20,25 @@ def dt(s):
     return datetime.fromisoformat(s.replace('Z','+00:00')).astimezone(timezone.utc)
 
 class MarketTests(unittest.TestCase):
+    def test_far_expiry_catalog_and_requested_chain_are_not_limited_to_six_dates(self):
+        from types import SimpleNamespace
+        near='2026-11-16';far='2028-01-21'
+        with tempfile.TemporaryDirectory() as folder:
+            feed=OpenDFeed(store=SnapshotStore(Path(folder)/'s.db'))
+            feed.ctx=SimpleNamespace(get_option_chain='chain',get_option_expiration_date='dates')
+            calls=[]
+            def records(method,*args,**kwargs):
+                calls.append((method,kwargs))
+                if method=='dates':return [{'strike_time':near},{'strike_time':far}]
+                expiry=far if kwargs.get('start')==far else near
+                return [{'code':'US.SPY'+expiry+'C100','option_type':'CALL','strike_time':expiry,'strike_price':100}]
+            feed.records=records
+            _,dates=feed.chain('SPY','US.SPY',near)
+            self.assertIn(far,dates)
+            feed.requested_expiries['SPY']=far
+            chain,_=feed.chain('SPY','US.SPY',near)
+            self.assertIn(far,{spec[0] for spec in chain.values()})
+            self.assertTrue(any(method=='chain' and args.get('start')==far for method,args in calls))
     def test_cloud_history_defaults_and_index_alias_deduplication(self):
         with patch.dict('os.environ', {'GEX_CLOUD':'1'}, clear=True):
             self.assertEqual(set(default_history_symbols()), {'SPXW','SPY','QQQ','IWM','AAPL','MSFT','NVDA','AMZN','GOOGL','META','TSLA'})
