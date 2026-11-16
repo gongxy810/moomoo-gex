@@ -994,14 +994,14 @@ new DarkSelect($('expiry'),'Expiry Date');new DarkSelect($('candle-period'),'Tim
 new DarkSelect($('replay-speed'),'Replay Speed');
 function loadLocalComputeHistory(symbol){
   const generation=state.sourceGeneration,day=marketDate(Date.now()),start=new Date(etTimestamp(day,'04:00')).toISOString(),end=new Date().toISOString();
-  state.computeHistoryLoading=true;render();
   return requestJson('history',symbol,AbortSignal.timeout(90000),{from:start,to:end,bucket:1,raw:'1'})
     .then(data=>{if(generation!==state.sourceGeneration||state.computeMode!=='local'||state.source!=='opend')return;
       const merged=[...(state.histories[symbol]??[]),...(data.frames??[])];
       state.histories[symbol]=[...new Map(merged.map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt)).slice(-1200);
       state.historyBounds[symbol]={start:Date.parse(start),end:Date.parse(end)};
+      delete state.errors['compute:'+symbol];
     }).catch(error=>{if(generation===state.sourceGeneration)state.errors['compute:'+symbol]=error.message;})
-    .finally(()=>{if(generation===state.sourceGeneration){state.computeHistoryLoading=false;state.nodeCache=null;scheduleRender();}});
+    .finally(()=>{if(generation===state.sourceGeneration){state.nodeCache=null;scheduleRender();}});
 }
 const computeMode=$('compute-mode');computeMode.value=state.computeMode;
 computeMode.onchange=()=>{
@@ -1009,8 +1009,9 @@ computeMode.onchange=()=>{
   try{localStorage.setItem('gex-compute-mode',state.computeMode);}catch{}
   state.nodeCache=null;state.computeHistoryLoading=false;
   if(state.computeMode==='local'&&cloudEnabled&&state.source==='opend'){
-    const symbols=new Set([...selectedSymbols(),...(state.symbol==='SPXW'?['SPY']:[])]);state.computeHistoryLoading=symbols.size>0;
-    void Promise.all([...symbols].map(symbol=>loadLocalComputeHistory(symbol))).finally(()=>{state.computeHistoryLoading=false;scheduleRender();});
+    const symbols=[...new Set([...selectedSymbols(),...(state.symbol==='SPXW'?['SPY']:[])])];state.computeHistoryLoading=symbols.length>0;scheduleRender();
+    void (async()=>{for(const symbol of symbols){if(state.computeMode!=='local'||state.source!=='opend')break;await loadLocalComputeHistory(symbol);}
+      state.computeHistoryLoading=false;scheduleRender();})();
   }
   scheduleRender();
 };
