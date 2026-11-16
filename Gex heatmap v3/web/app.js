@@ -125,10 +125,11 @@ function viewFor(frame, expiry = state.expiry) {
 }
 
 function renderLadder(column, data, previous) {
+  const cloud=cloudEnabled&&state.source==='opend';
   const symbol=column.symbol;
   const {frame, dates, strikes, shown, peak} = viewFor(data);
-  const remote=cloudEnabled?cloudFor(frame,dates,state,requestJson,scheduleRender,activeMetric):null;
-  const rowRoles=remote?.roles??(cloudEnabled?{roles:new Map()}:classifyNodes(groups(frame,dates),frame?.spot?.value)),rowVelocities=remote?.velocity??(cloudEnabled?{entries:[]}:velocityBoard(frame,dates,historyFor(symbol)));
+  const remote=cloud?cloudFor(frame,dates,state,requestJson,scheduleRender,activeMetric):null;
+  const rowRoles=remote?.roles??(cloud?{roles:new Map()}:classifyNodes(groups(frame,dates),frame?.spot?.value)),rowVelocities=remote?.velocity??(cloud?{entries:[]}:velocityBoard(frame,dates,historyFor(symbol)));
   const before = new Map(groups(previous, dates).map(row => [row.strike, row]));
   const old = document.querySelector(`[data-ladder="${column.id}"] .ladder-body`);
   const ladder = element('article', '', 'ladder' + (state.focusId === column.id ? ' selected' : ''));
@@ -174,7 +175,7 @@ function renderLadder(column, data, previous) {
     const line = element('div','', 'strike-row' + (isKing ? ' king' : '') + (atSpot === row.strike ? ' nearest' : ''));
     line.tabIndex = 0;
     line.dataset.strike=row.strike;
-    const metric=cloudEnabled?(remote?.moves?.[state.speed]?.[row.strike]??{value:null,label:'...'}):rowVelocity(row,before.get(row.strike),dates,previous?dates.filter(d=>previous.dates.includes(d)):[]);
+    const metric=cloud?(remote?.moves?.[state.speed]?.[row.strike]??{value:null,label:'...'}):rowVelocity(row,before.get(row.strike),dates,previous?dates.filter(d=>previous.dates.includes(d)):[]);
     const move=metric.value;
     line.__gexHover={symbol,source:state.source,strike:row.strike,expiries:[...dates],net_gex:row.value,metric:activeMetric,date:frame.sessionDate,
       asof:new Date(state.replayCursor??Date.parse(frame.captureAt??frame.collectedAt)).toISOString(),replay:state.replayCursor!==null};
@@ -183,7 +184,7 @@ function renderLadder(column, data, previous) {
     exposure.append(element('span',metric.label+(metric.flipped?' ↔':''),'velocity '+tone(move))); 
     exposure.append(element('span', cash(row.value) + (isKing ? ' ★' : ''),'gex-amount'));
     line.append(element('span', px(row.strike), 'strike-price'), exposure);
-    decorateRow(line,row,{symbol,frame,dates,history:historyFor(symbol),bars:latestPrice(frame,symbol)?.bars??[],sourceMinutes:latestPrice(frame,symbol)?.barMinutes??1,cutoff:state.replayCursor??Date.parse(frame.collectedAt),threshold:state.threshold,peak,roles:rowRoles,velocities:rowVelocities,remote,cloud:cloudEnabled});
+    decorateRow(line,row,{symbol,frame,dates,history:historyFor(symbol),bars:latestPrice(frame,symbol)?.bars??[],sourceMinutes:latestPrice(frame,symbol)?.barMinutes??1,cutoff:state.replayCursor??Date.parse(frame.collectedAt),threshold:state.threshold,peak,roles:rowRoles,velocities:rowVelocities,remote,cloud:cloud});
     contents.append(line);
   }
   body.append(contents);
@@ -241,6 +242,7 @@ function zeroGammaFor(frame,dates){
 }
 
 function renderChart(view) {
+  const cloud=cloudEnabled&&state.source==='opend';
   const chartStarted=performance.now();
   const frame=view.frame,spot=frame?.spot,at=state.replayCursor??(state.source==='demo'?Date.parse(frame?.collectedAt):Date.now()),replay=state.replayCursor!==null;
   const daily=dayChange(frame),label=spotLabel(state.symbol,spot);
@@ -274,9 +276,9 @@ function renderChart(view) {
   const related=state.symbol==='SPXW'&&state.derived?historyFor('SPY'):[];
   const nodeKey=JSON.stringify([activeMetric,state.symbol,view.dates,state.limit,state.center,state.chartSession,state.candleMinutes,state.nodes,state.derived,state.top,state.threshold,
     replay?at:'live',history.length,history.at(-1)?.collectedAt,related.length,related.at(-1)?.collectedAt]);
-  const remoteAnalysis=cloudEnabled?cloudFor(frame,view.dates,state,requestJson,scheduleRender,activeMetric):null;
-  let sampled=cloudEnabled?{key:nodeKey,nodes:remoteAnalysis?.nodes??[],trailCount:remoteAnalysis?.trailCount??0,candidates:remoteAnalysis?.candidates??0,loadedSize:0}:state.nodeCache;
-  if(!cloudEnabled&&sampled?.key!==nodeKey){
+  const remoteAnalysis=cloud?cloudFor(frame,view.dates,state,requestJson,scheduleRender,activeMetric):null;
+  let sampled=cloud?{key:nodeKey,nodes:remoteAnalysis?.nodes??[],trailCount:remoteAnalysis?.trailCount??0,candidates:remoteAnalysis?.candidates??0,loadedSize:0}:state.nodeCache;
+  if(!cloud&&sampled?.key!==nodeKey){
     const validHistory=history.filter(f=>(!f.optionLastAt||Date.parse(f.optionLastAt)<=at)&&
       groups(f,view.dates).some(row=>finite(row.value)&&row.value!==0)&&
       (state.chartSession==='ALL'||(state.chartSession==='EXT'?['PRE','POST'].includes(f.spot?.phase):f.spot?.phase===state.chartSession)));
@@ -315,7 +317,7 @@ function renderChart(view) {
   }
   const {nodes,trailCount,candidates,loadedSize}=sampled;
   $('derived').textContent=`Derived ${loadedSize}/${selectedSymbols().filter(s=>s==='SPY'&&state.symbol==='SPXW').length}`;
-  const structure=structures(view,history,at,remoteAnalysis,cloudEnabled);
+  const structure=structures(view,history,at,remoteAnalysis,cloud);
   const levels=[...v3.lines.values()].filter(l=>l.symbol===state.symbol),annotations=[];
   if(v3.gk){if(structure.roles.gatekeeper)levels.push({price:structure.roles.gatekeeper.strike,color:'#f5b754',label:'Gatekeeper',style:2});if(finite(structure.roles.flip))levels.push({price:structure.roles.flip,color:'#c4bbff',label:activeMetric+' Profile Flip',style:2});}
   const zero=zeroGammaFor(frame,view.dates);state.zeroGamma=zero;
@@ -368,7 +370,7 @@ function renderChart(view) {
   for(const option of $('candle-period').options??[])option.disabled=!state.supportedPeriods.includes(Number(option.value));
   $('candle-period')._darkSelect?.sync();
   const messages=[];
-  if(cloudEnabled&&!remoteAnalysis?.available)messages.push(remoteAnalysis?.reason?'Cloud analysis unavailable: '+remoteAnalysis.reason:'Cloud calculation updating; prices and heatmap are independent');
+  if(cloud&&!remoteAnalysis?.available)messages.push(remoteAnalysis?.reason?'Cloud analysis unavailable: '+remoteAnalysis.reason:'Cloud calculation updating; prices and heatmap are independent');
   if(!zero.available)messages.push(`Zero Gamma ${zero.loading?'计算中':'不可用：'+zero.reason}`);
   if(state.historyPending[state.symbol])messages.push('历史节点加载中；价格与热图独立可用');
   if(replay&&state.replayPending.has(`${state.symbol}|${marketDate(at)}`))messages.push('Replay 历史数据加载中');
