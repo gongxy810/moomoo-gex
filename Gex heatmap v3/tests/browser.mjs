@@ -180,7 +180,7 @@ try{
     await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'G',shiftKey:true,bubbles:true}))");
     await until("document.querySelectorAll('[data-metric=GEX]').length>5");
     const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,live?'v3-live.png':'v3-features.png'),Buffer.from(shot.data,'base64'));
-    assert.deepEqual(exceptions,[]);console.log('V3 controls, metric, context menu, Replay cutoff and keyboard verified');
+    assert.deepEqual(exceptions,[]);const heap=await send('Runtime.getHeapUsage');console.log(JSON.stringify({verified:'V3 controls, metric, context menu, Replay cutoff and keyboard',jsHeapMB:Math.round(heap.usedSize/1048576),url:live?liveUrl:'fixture'}));
   }
   else if(zeroOnly){
     await evaluate(`document.querySelector('#symbols button[data-symbol=${process.argv.includes('--spxw')?'SPXW':'SPY'}]').click()`);
