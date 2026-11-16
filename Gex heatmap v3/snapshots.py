@@ -203,9 +203,9 @@ class SnapshotStore:
                 (symbol,symbol,start,end,bucket_minutes,symbol,recent,end))
             for raw, in rows:keep(raw)
             if include_closes:
-                closes=db.execute('''SELECT frame FROM captures WHERE symbol=? AND
+                closes=db.execute('''SELECT frame FROM captures WHERE symbol=? AND at>=? AND
                     julianday(json_extract(frame,'$.sessionClose'))-julianday(at) BETWEEN 0 AND 90.0/86400 AND julianday(at)<=julianday(?)
-                    ORDER BY at''',(symbol,end))
+                    ORDER BY at''',(symbol,start,end))
                 for raw, in closes:keep(raw)
                 for raw, in db.execute('SELECT frame FROM close_archives WHERE symbol=? AND at<=? ORDER BY day DESC LIMIT 2',(symbol,end)):keep(raw)
             if metadata and frames:
