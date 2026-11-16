@@ -7,6 +7,9 @@ import argparse,fnmatch,hashlib,os,re,shutil,subprocess,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 PATTERNS=[s.strip() for s in (ROOT/'.gitignore').read_text().splitlines() if s.strip() and not s.startswith('#')]
+def execute(*args,**kwargs):
+    if os.name=='nt':kwargs.setdefault('creationflags',subprocess.CREATE_NO_WINDOW)
+    return subprocess.run(*args,**kwargs)
 def sources():
     for parent,dirs,files in os.walk(ROOT):
         dirs[:]=[d for d in dirs if d not in ('.git','.venv','node_modules','data','dist','__pycache__','browser-artifacts')]
@@ -21,24 +24,40 @@ def git_path():
         if p.exists():return str(p)
     raise RuntimeError('Install Git for Windows first, then restart VS Code.')
 def publish(message):
+    guard_path=ROOT/'data/publish.lock';guard_path.parent.mkdir(exist_ok=True)
+    with guard_path.open('a+b') as guard:
+        guard.seek(0)
+        if os.name=='nt':
+            import msvcrt
+            msvcrt.locking(guard.fileno(),msvcrt.LK_NBLCK,1)
+        else:
+            import fcntl
+            fcntl.flock(guard,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        try:return _publish(message)
+        finally:
+            guard.seek(0)
+            if os.name=='nt':msvcrt.locking(guard.fileno(),msvcrt.LK_UNLCK,1)
+
+def _publish(message):
     git=git_path();os.environ['PATH']=str(Path(git).parent)+os.pathsep+os.environ.get('PATH','');repo=ROOT/'data/git-workspace';repo.parent.mkdir(exist_ok=True)
-    def run(*args):return subprocess.run([git,*args],cwd=repo if repo.exists() else ROOT,check=True)
+    def run(*args):return execute([git,*args],cwd=repo if repo.exists() else ROOT,check=True)
     if not (repo/'.git').exists():
-        subprocess.run([git,'clone','--depth=1','--sparse','https://github.com/gongxy810/moomoo-gex.git',str(repo)],check=True)
+        execute([git,'clone','--depth=1','--sparse','https://github.com/gongxy810/moomoo-gex.git',str(repo)],check=True)
         run('sparse-checkout','set','Gex heatmap v3','.github/workflows')
         run('config','user.name','gongxy810');run('config','user.email','144390746+gongxy810@users.noreply.github.com')
     # Refuse to discard edits/conflicts in the staging checkout.
-    dirty=subprocess.check_output([git,'status','--porcelain'],cwd=repo).strip()
+    dirty=execute([git,'status','--porcelain'],cwd=repo,stdout=subprocess.PIPE,check=True).stdout.strip()
     if dirty:raise RuntimeError('Staging checkout has uncommitted files; inspect data/git-workspace before retrying.')
     run('pull','--ff-only','origin','main')
+    run('config','core.autocrlf','false')
     target=repo/'Gex heatmap v3'
     for source,rel in sources():
         raw=source.read_bytes()
-        if re.search(rb'-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----|github_pat_[A-Za-z0-9_]{30,}|gh[pousr]_[A-Za-z0-9]{30,}',raw):raise RuntimeError('Potential credential in '+rel)
+        if re.search(rb'-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----|github_pat_[A-Za-z0-9_]{30,}|gh[pousr]_[A-Za-z0-9]{30,}|sb_secret_[A-Za-z0-9_-]{20,}|postgres(?:ql)?://[^\s:]+:[^\s@]+@',raw):raise RuntimeError('Potential credential in '+rel)
         dest=target/rel;dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(raw)
     workflow=repo/'.github/workflows/gex-v3.yml';workflow.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/'cloud/github-actions.yml',workflow)
     run('add','--','Gex heatmap v3','.github/workflows/gex-v3.yml')
-    if subprocess.run([git,'diff','--cached','--quiet'],cwd=repo).returncode:
+    if execute([git,'diff','--cached','--quiet'],cwd=repo).returncode:
         run('commit','-m',message)
     run('push','origin','main')
     print('Published. GitHub tests gate automatic cloud deployment.',flush=True)

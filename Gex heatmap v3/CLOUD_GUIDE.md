@@ -18,8 +18,8 @@ website share this origin. The server still listens only on 127.0.0.1:8766.
 - Supabase: only latest structured snapshots; raw chains/history stay in cloud
   SQLite. Table `public.gex_latest_snapshots` uses RLS and no browser-role grants.
 
-The Windows task `GEX v3 OpenD private tunnel` starts at user logon and retries
-the tunnel automatically. It uses an ignored private key under
+The Windows task `GEX v3 OpenD private tunnel` runs a console-free Python
+supervisor at user logon and retries the tunnel automatically. It uses an ignored private key under
 `data/cloud-tunnel`, never a key in GitHub. The dedicated cloud SSH listener is
 Tailscale-address-only port 2222 and permits only forwarding to loopback 11111,
 not shells or arbitrary ports. OpenD, Windows and Tailscale must remain online.
@@ -28,6 +28,14 @@ Existing cached cloud data survives a disconnected laptop, but cannot update.
 ## Development and deployment
 
 Open this original local v3 folder in VS Code. Tasks:
+
+Automatic source synchronization is enabled by the background Windows task
+`GEX v3 source auto-sync` (also starts at user logon). Saving source changes
+starts a 20-second debounce, then creates a commit and pushes it. Generated data,
+credentials, databases, dependencies and logs are excluded. Logs are available
+at `data/autosync.log`. Pause that Windows task to work without publishing.
+The VS Code tasks below are optional manual controls; do not launch a second
+watcher unless the background task is paused.
 
 1. `GEX v3: Publish to GitHub and cloud` (default build task): copy only tracked
    source candidates into `data/git-workspace`, commit and push to GitHub.
@@ -42,6 +50,8 @@ GitHub Actions must live at the repository-root path
 v2 is preserved. CI tests first and then advances the `gex-v3-tested` tag.
 The cloud checks this tested ref every two minutes, verifies again, switches
 the release symlink, restarts the service and rolls back on health failure.
+Python dependencies are pinned and cached in separate virtual environments by
+the requirements hash. A release failure restores both code and interpreter.
 No GitHub or Google Cloud SSH secrets are needed in Actions.
 
 Cloud layout: `~/gex-cloud/releases`, `current`, `data`, `runtime`, `cloud.env`.
