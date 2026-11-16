@@ -1,4 +1,4 @@
-import {cloudEnabled,cloudFor,compactCloudHistory} from './cloud-client.js';
+import {cloudEnabled,cloudFor,compactCloudHistory,prepareCloudFrame} from './cloud-client.js';
 import {symbolRows} from './symbol-list.js';
 import {v3,installV3,decorateRow,structures} from './v3-ui.js';
 import {activeMetric,metricCell} from './model.js';
@@ -68,7 +68,15 @@ const clock=new ReplayClock(cursor=>{
   const entering=state.replayCursor===null&&cursor!==null,exiting=state.replayCursor!==null&&cursor===null;
   if(entering){clearTimeout(timer);clearTimeout(priceTimer);controller=null;priceGeneration++;state.busy=false;}
   if(cursor!==null&&state.replayMax&&cursor>state.replayMax){clock.pause();cursor=state.replayMax;clock.cursor=cursor;}
-  state.replayCursor=cursor;state.index=cursor===null?null:0;render();chart.latest();if(cursor!==null){void loadReplayDay(cursor);if(cloudEnabled)void loadCloudReplay(cursor);}
+  state.replayCursor=cursor;state.index=cursor===null?null:0;render();chart.latest();
+  if(cursor!==null){
+    return Promise.all([loadReplayDay(cursor),...(cloudEnabled?[loadCloudReplay(cursor)]:[])]).then(async()=>{
+      if(state.replayCursor!==cursor)return;
+      const frame=active()[state.symbol];
+      if(cloudEnabled&&state.source==='opend')await prepareCloudFrame(frame,datesFor(frame,state.expiry),state,requestJson,scheduleRender,activeMetric);
+      if(state.replayCursor===cursor)render();
+    });
+  }
   if(exiting){void refresh();void refreshPrice();}
 });
 chart.onReplayPick=at=>{setReplayPicking(false);clock.seek(at);};
