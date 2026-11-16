@@ -72,10 +72,10 @@ const clock=new ReplayClock(cursor=>{
   if(cursor!==null&&state.replayMax&&cursor>state.replayMax){clock.pause();cursor=state.replayMax;clock.cursor=cursor;}
   state.replayCursor=cursor;state.index=cursor===null?null:0;render();chart.latest();
   if(cursor!==null){
-    return Promise.all([loadReplayDay(cursor),...(cloudEnabled?[loadCloudReplay(cursor)]:[])]).then(async()=>{
+    return Promise.all([loadReplayDay(cursor),...(useCloudAnalysis()?[loadCloudReplay(cursor)]:[])]).then(async()=>{
       if(state.replayCursor!==cursor)return;
       const frame=active()[state.symbol];
-      if(cloudEnabled&&state.source==='opend')await prepareCloudFrame(frame,datesFor(frame,state.expiry),state,requestJson,scheduleRender,activeMetric);
+      if(useCloudAnalysis())await prepareCloudFrame(frame,datesFor(frame,state.expiry),state,requestJson,scheduleRender,activeMetric);
       if(state.replayCursor===cursor)render();
     });
   }
@@ -952,7 +952,7 @@ async function loadReplayDay(at){
     try{const priceTask=requestJson('price-history',symbol,AbortSignal.timeout(30000),{from,to}).then(price=>{
       if(generation===state.sourceGeneration&&state.source==='opend'&&state.replayDateOrder.includes(day)){mergePrice(symbol,price,false);scheduleRender();}
     }).catch(error=>console.info('gex-replay-price',error.message));
-      const data=await requestJson('history',symbol,AbortSignal.timeout(90000),{from,to,bucket:state.candleMinutes,full:'1'});
+      const data=await requestJson('history',symbol,AbortSignal.timeout(90000),{from,to,bucket:state.candleMinutes,full:'1',...(cloudEnabled&&state.computeMode==='local'?{raw:'1'}:{})});
       await priceTask;
       if(generation!==state.sourceGeneration||state.source!=='opend'||!state.replayDateOrder.includes(day))return;
       state.replayHistories[key]=mergeReplayFrames(state.replayHistories[key]??[],data.frames??[]);
@@ -990,6 +990,28 @@ $('range').value=String(state.limit);$('speed').value=String(state.speed);
 new DarkSelect($('range'),'Strikes');new DarkSelect($('speed'),'GEX Velocity');
 new DarkSelect($('expiry'),'Expiry Date');new DarkSelect($('candle-period'),'Timeframe');
 new DarkSelect($('replay-speed'),'Replay Speed');
+function loadLocalComputeHistory(symbol){
+  const generation=state.sourceGeneration,day=marketDate(Date.now()),start=new Date(etTimestamp(day,'04:00')).toISOString(),end=new Date().toISOString();
+  state.computeHistoryLoading=true;render();
+  return requestJson('history',symbol,AbortSignal.timeout(90000),{from:start,to:end,bucket:1,raw:'1'})
+    .then(data=>{if(generation!==state.sourceGeneration||state.computeMode!=='local'||state.source!=='opend')return;
+      const merged=[...(state.histories[symbol]??[]),...(data.frames??[])];
+      state.histories[symbol]=[...new Map(merged.map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt)).slice(-1200);
+      state.historyBounds[symbol]={start:Date.parse(start),end:Date.parse(end)};
+    }).catch(error=>{if(generation===state.sourceGeneration)state.errors['compute:'+symbol]=error.message;})
+    .finally(()=>{if(generation===state.sourceGeneration){state.computeHistoryLoading=false;state.nodeCache=null;scheduleRender();}});
+}
+const computeMode=$('compute-mode');computeMode.value=state.computeMode;
+computeMode.onchange=()=>{
+  state.computeMode=computeMode.value==='local'?'local':'cloud';
+  try{localStorage.setItem('gex-compute-mode',state.computeMode);}catch{}
+  state.nodeCache=null;state.computeHistoryLoading=false;
+  if(state.computeMode==='local'&&cloudEnabled&&state.source==='opend'){
+    for(const symbol of new Set([...selectedSymbols(),...(state.symbol==='SPXW'?['SPY']:[])]))void loadLocalComputeHistory(symbol);
+  }
+  scheduleRender();
+};
+if(state.computeMode==='local'&&cloudEnabled&&state.source==='opend')setTimeout(()=>computeMode.onchange(),0);
 const replayIntervalPicker=new DarkSelect($('replay-period'),'Replay update interval');
 if(replayIntervalPicker.list){
   const heading=element('div','UPDATE INTERVAL ⓘ','interval-menu-heading');
