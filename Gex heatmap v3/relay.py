@@ -175,6 +175,8 @@ class OpenDFeed:
         self.cache, self.chains, self.price_cache, self.calendars, self.daily_cache = {}, {}, {}, {}, {}
         self.subscriptions, self.lock = set(), RLock()
         self.option_stream = None
+        self.expiry_lock = Lock()
+        self.requested_expiries = {}
         self.store = store or SnapshotStore(Path(os.environ.get('GEX_DATA_DIR',str(Path(__file__).parent/'data')))/'captures.sqlite3')
         self.mirror=LatestMirror() if not price_only else None
         self.last_snapshot = 0
@@ -403,8 +405,10 @@ class OpenDFeed:
             return result
 
     def chain(self, symbol, code, day):
+        with self.expiry_lock:
+            requested = self.requested_expiries.get(symbol)
         cached = self.chains.get(symbol)
-        if cached and cached[3]==day and monotonic()-cached[0] < 300:
+        if cached and cached[3]==day and len(cached)>4 and cached[4]==requested and monotonic()-cached[0] < 3600:
             return cached[1], cached[2]
         errors = []
         owners = [code, 'US.SPX', 'US.SPXW'] if symbol=='SPXW' else [code]
@@ -417,12 +421,14 @@ class OpenDFeed:
                     dates = sorted({spec[0] for spec in contracts.values()})
                     # Some index servers support chain but time out on expiration listing.
                     # Never make that auxiliary endpoint a prerequisite for SPXW.
-                    if symbol != 'SPXW':
-                        try:
-                            dates = sorted({str(r['strike_time'])[:10] for r in self.records(self.ctx.get_option_expiration_date, owner)})
-                        except RuntimeError:
-                            pass
-                    self.chains[symbol] = (monotonic(), contracts, dates, day)
+                    try:
+                        dates = sorted(set(dates) | {str(r['strike_time'])[:10] for r in self.records(self.ctx.get_option_expiration_date, owner)})
+                    except RuntimeError:
+                        pass
+                    if requested and requested not in {spec[0] for spec in contracts.values()}:
+                        extra = self.records(self.ctx.get_option_chain, owner, start=requested, end=requested)
+                        contracts.update(contracts_from_chain(symbol, extra))
+                    self.chains[symbol] = (monotonic(), contracts, dates, day, requested)
                     return contracts, dates
             except RuntimeError as error:
                 errors.append(str(error))
@@ -459,7 +465,10 @@ class OpenDFeed:
             price = self.price(symbol)
             pipeline['price']=round(monotonic()-stage,3)
             spot, warnings = price['spot'], list(price['warnings'])
-            dates = sorted({spec[0] for spec in chain.values()})[:6]
+            available_sampled = sorted({spec[0] for spec in chain.values()})
+            with self.expiry_lock:
+                requested = self.requested_expiries.get(symbol)
+            dates = sorted(set(available_sampled[:6]) | ({requested} if requested in available_sampled else set()))
             if spot is None and symbol=='SPXW':
                 stage=monotonic()
                 close = calendar.close(day)
@@ -511,6 +520,11 @@ class OpenDFeed:
                     'dates': dates, 'availableDates': available, 'cells': cells, 'bars': price['bars'],
                     'price': price, 'warnings': warnings, 'refreshSeconds': 30, 'pipeline':pipeline, **calendar.payload(start)}
             frame['expiryCloses']={d:iso(calendar.close(d)) for d in dates if calendar.close(d)}
+            for d in dates:
+                if not frame['expiryCloses'].get(d):
+                    # Ask OpenD for that expiry's actual session, including half days.
+                    expiry_calendar = self.calendar(code, datetime.fromisoformat(d).replace(tzinfo=ET))
+                    frame['expiryCloses'][d] = iso(expiry_calendar.close(d)) if expiry_calendar.close(d) else None
             if self.option_stream:
                 frame['optionStream'] = self.option_stream.status(symbol)
             frame['listedStrikes']={d:sorted({k for e,k,_ in chain.values() if e==d}) for d in dates}

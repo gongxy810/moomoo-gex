@@ -158,6 +158,15 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                         return self.json_response(result)
                     if path.path in ('/api/snapshot','/api/refresh'):
                         force=path.path=='/api/refresh'
+                        expiry=parse_qs(path.query).get('expiry',[None])[0]
+                        if expiry:
+                            date.fromisoformat(expiry)
+                            if expiry < datetime.now(ZoneInfo('America/New_York')).date().isoformat():
+                                raise ValueError('Expired option chains require recorded Replay history')
+                            with feed.expiry_lock:
+                                changed=feed.requested_expiries.get(symbol)!=expiry
+                                feed.requested_expiries[symbol]=expiry
+                            force=force or changed
                         result=manager.request(symbol,force=force) if manager else feed.collect(symbol,force=force)
                         if os.environ.get('GEX_CLOUD')=='1':
                             result={k:v for k,v in result.items() if k!='bars'}
