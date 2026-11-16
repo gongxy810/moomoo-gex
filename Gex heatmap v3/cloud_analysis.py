@@ -20,6 +20,7 @@ class CloudAnalysis:
         if cached is not None:return cached
         slot=(str(client)[:64],symbol,scope)
         with self.condition:
+            self.pending.pop(slot,None)
             if self.running!=key:
                 self.pending[slot]=(key,args,bool(replay),scope=='chart')
                 while len(self.pending)>24:
@@ -40,7 +41,9 @@ class CloudAnalysis:
                 result=self.compute(*args)
                 if not result.get('available'):
                     # Keep immutable data-quality errors; busy work will be retried.
-                    if 'busy' not in result.get('reason','').lower():self.cache[key]=result
+                    if 'busy' not in result.get('reason','').lower():
+                        self.cache[key]=result
+                        while len(self.cache)>12:self.cache.pop(next(iter(self.cache)))
             except Exception as error:
                 print(json.dumps({'event':'cloud-analysis-error','symbol':args[0],'error_type':type(error).__name__}),flush=True)
             finally:

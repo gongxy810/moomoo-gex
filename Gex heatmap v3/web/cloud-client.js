@@ -49,8 +49,8 @@ export async function prepareCloudFrame(frame,dates,state,request,render,metric)
   for(let attempt=0;attempt<60;attempt++){
     const ready=cloudFor(frame,dates,state,request,render,metric);
     if(ready?.available||ready&&!ready.pending)return ready;
-    const jobs=[...pending.values()].map(entry=>entry.promise);if(!jobs.length)return;
-    await Promise.all(jobs);
+    const jobs=[...pending.values()].map(entry=>entry.promise);
+    if(jobs.length)await Promise.all(jobs);
     if(contextFor(state,metric)!==context||latestContext!==context)return;
     await new Promise(resolve=>setTimeout(resolve,2100));
   }
