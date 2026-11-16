@@ -193,6 +193,17 @@ function renderLadder(column, data, previous) {
   if(position!==null){const marker=element('div','','spot-marker');marker.style.top=position+'px';
     marker.append(element('span',`${spotLabel(symbol,price)} ${px(price.value)}`));
     marker.title=`${price.source??price.label} · ${price.at}`;contents.append(marker);}
+  const marks=new Map();
+  for(const [key,name] of [['gatekeeper','GK'],['ceiling','Ceiling'],['floor','Floor']]){
+    const value=rowRoles[key]?.strike;if(!finite(value))continue;
+    if(!marks.has(value))marks.set(value,[]);marks.get(value).push(name);
+  }
+  for(const [value,names] of marks){
+    const y=spotPosition(strikes,value,20);if(y===null)continue;
+    const marker=element('div','','structure-marker');marker.style.top=y+'px';
+    marker.dataset.roles=names.join(' / ');marker.dataset.price=value;
+    marker.append(element('span',names.join(' / ')+' '+px(value)));contents.append(marker);
+  }
   const progress=state.replayCursor===null?state.columnStatus[column.id]:null;
   if(progress?.symbol===symbol&&progress.phase==='loading')status.append(element('span','加载期权链…','loading-column'));
   if(!shown.length){
@@ -492,7 +503,7 @@ function render(recenter = false) {
   $('center').textContent=state.center;
   const expiryMenu=$('expiry');
   const fixed=[['0dte','0DTE'],['front','Front'],['week','Next 7 days']];
-  const days=[...(frame?.dates ?? [])];
+  const days=[...new Set([...(frame?.availableDates??[]),...(frame?.dates??[])])].sort();
   if (!fixed.some(([key]) => key===state.expiry) && !days.includes(state.expiry)) days.push(state.expiry);
   expiryMenu.replaceChildren(...[...fixed,...days.map(date=>[date,date])].map(([value,label])=>new Option(label,value)));
   expiryMenu.value=state.expiry;
@@ -589,7 +600,8 @@ async function requestJson(path,symbol,signal,day){
 }
 async function fetchSymbol(symbol,force=false){
   if(inflight.has(symbol))return inflight.get(symbol);
-  const pending=requestJson(force?'refresh':'snapshot',symbol,AbortSignal.timeout(15000)).then(data=>{
+  const requested=/^\d{4}-\d{2}-\d{2}$/.test(state.expiry)&&state.replayCursor===null?{expiry:state.expiry}:{};
+  const pending=requestJson(force?'refresh':'snapshot',symbol,AbortSignal.timeout(15000),requested).then(data=>{
     if(data.source!=='opend'||data.symbol!==symbol||(!Array.isArray(data.cells)&&data.status!=='loading'))throw new Error('Invalid OpenD response');return data;
   }).finally(()=>inflight.delete(symbol));inflight.set(symbol,pending);return pending;
 }
@@ -661,7 +673,7 @@ function source(name) {
 }
 
 $('symbols').addEventListener('click',event=>{if(event.target.dataset.symbol){state.focusId=event.target.dataset.column;select(event.target.dataset.symbol);}});
-$('expiry').onchange=event=>{state.expiry=event.target.value;render();};
+$('expiry').onchange=event=>{state.expiry=event.target.value;render();if(state.source==='opend'&&state.replayCursor===null)void refresh(true);};
 $('range').onchange=event=>{state.limit=viewSettings({limit:event.target.value,speed:state.speed}).limit;saveView();render(true);};
 $('speed').onchange=event=>{state.speed=viewSettings({limit:state.limit,speed:event.target.value}).speed;saveView();render();};
 $('center').onclick=()=>{state.center=state.center==='Spot'?'King':'Spot';render(true);};

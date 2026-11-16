@@ -19,7 +19,7 @@ export function symbolRows(target,{groups,quotes,current,query='',choose}){
       const text=make('span',symbol),desc=make('small',symbol==='SPX'?'Cash index · SPXW GEX':symbol==='SPXW'?'PM options · REF':title);
       text.append(desc);name.append(icon,text);row.append(name);
       row.append(make('span',valid?(spot.status==='REF'?'REF ':'')+spot.value.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'—','symbol-list-last'));
-      for(const value of [change,percent])row.append(make('span',signed(value)+(value!==null&&value===percent?'%':''),value===null?'quiet':value>=0?'pos':'neg'));
+      for(const [i,value] of [change,percent].entries())row.append(make('span',signed(value)+(value!==null&&i===1?'%':''),value===null?'quiet':value>=0?'pos':'neg'));
       row.title=`${symbol} · ${spot?.source??'行情不可用'} · ${spot?.at??'无有效时间戳'} · ${spot?.status??'Unavailable'}`;
       row.onclick=()=>choose(symbol);target.append(row);count++;
     }
