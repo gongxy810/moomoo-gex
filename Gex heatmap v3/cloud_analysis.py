@@ -3,10 +3,48 @@ import json,subprocess,os
 from pathlib import Path
 from contextlib import closing
 from datetime import datetime,timedelta,timezone
-from threading import RLock
+from threading import RLock,Condition,Thread
 
 class CloudAnalysis:
-    def __init__(self,store):self.store=store;self.lock=RLock();self.cache={}
+    def __init__(self,store):
+        self.store=store;self.lock=RLock();self.cache={}
+        self.condition=Condition();self.pending={};self.running=None;self.worker=None
+
+    def request(self,symbol,dates,asof,capture,metric,minutes,top,threshold,session,scope='chart',replay=False,client='default'):
+        at=datetime.fromisoformat(asof.replace('Z','+00:00'))
+        if at.tzinfo is None or metric not in ('GEX','VEX') or minutes not in (1,2,5,15) or top not in (3,5,10) or not 0<=threshold<=100 or scope not in ('chart','ladder') or session not in ('ALL','EXT','PRE','RTH','POST'):
+            raise ValueError('Invalid analysis context')
+        args=(symbol,dates,asof,capture,metric,minutes,top,threshold,session,scope)
+        key=(symbol,tuple(dates),asof,capture,metric,minutes,top,threshold,session,scope)
+        cached=self.cache.get(key)
+        if cached is not None:return cached
+        slot=(str(client)[:64],symbol,scope)
+        with self.condition:
+            if self.running!=key:
+                self.pending[slot]=(key,args,bool(replay),scope=='chart')
+                while len(self.pending)>24:
+                    discard=min(self.pending,key=lambda k:(self.pending[k][2],self.pending[k][3]))
+                    del self.pending[discard]
+                if self.worker is None:
+                    self.worker=Thread(target=self._work,name='gex-analysis',daemon=True);self.worker.start()
+                self.condition.notify()
+        return {'available':False,'pending':True,'reason':'Historical analysis queued; live prices remain independent'}
+
+    def _work(self):
+        while True:
+            with self.condition:
+                self.condition.wait_for(lambda:bool(self.pending))
+                slot=max(self.pending,key=lambda k:(self.pending[k][2],self.pending[k][3]))
+                key,args,_,_=self.pending.pop(slot);self.running=key
+            try:
+                result=self.compute(*args)
+                if not result.get('available'):
+                    # Keep immutable data-quality errors; busy work will be retried.
+                    if 'busy' not in result.get('reason','').lower():self.cache[key]=result
+            except Exception as error:
+                print(json.dumps({'event':'cloud-analysis-error','symbol':args[0],'error_type':type(error).__name__}),flush=True)
+            finally:
+                with self.condition:self.running=None
     def compute(self,symbol,dates,asof,capture,metric,minutes,top,threshold,session,scope='chart'):
         key=(symbol,tuple(dates),asof,capture,metric,minutes,top,threshold,session,scope)
         # Completed immutable answers remain readable while another context runs.

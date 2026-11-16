@@ -392,7 +392,7 @@ function renderChart(view) {
   for(const option of $('candle-period').options??[])option.disabled=!state.supportedPeriods.includes(Number(option.value));
   $('candle-period')._darkSelect?.sync();
   const messages=[];
-  if(cloud&&!remoteAnalysis?.available)messages.push(remoteAnalysis?.reason?'Cloud analysis unavailable: '+remoteAnalysis.reason:'Cloud calculation updating; prices and heatmap are independent');
+  if(cloud&&!remoteAnalysis?.available)messages.push(remoteAnalysis?.pending?'Cloud calculation updating; prices and heatmap are independent':remoteAnalysis?.reason?'Cloud analysis unavailable: '+remoteAnalysis.reason:'Cloud calculation updating; prices and heatmap are independent');
   if(!zero.available)messages.push(`Zero Gamma ${zero.loading?'计算中':'不可用：'+zero.reason}`);
   if(state.historyPending[state.symbol])messages.push('历史节点加载中；价格与热图独立可用');
   if(replay&&state.replayPending.has(`${state.symbol}|${marketDate(at)}`))messages.push('Replay 历史数据加载中');
