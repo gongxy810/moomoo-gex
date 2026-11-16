@@ -304,7 +304,7 @@ class OpenDFeed:
         return rows
 
     def subscribe(self, code, subtype, push=False):
-        key = (code, subtype)
+        key = (code, subtype, bool(push))
         if key not in self.subscriptions:
             ret, message = self.ctx.subscribe([code], [subtype], subscribe_push=push, extended_time=True)
             if ret != self.sdk.RET_OK:
@@ -322,7 +322,7 @@ class OpenDFeed:
         rows = self.snapshots([code])
         ticks = []
         try:
-            self.subscribe(code, self.sdk.SubType.TICKER)
+            self.subscribe(code, self.sdk.SubType.TICKER,push=True)
             ticks = self.records(self.ctx.get_rt_ticker, code, num=100)
         except RuntimeError:
             pass

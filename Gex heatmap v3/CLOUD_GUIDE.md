@@ -9,6 +9,13 @@ website share this origin. The server still listens only on 127.0.0.1:8766.
 
 ## Responsibilities
 
+Underlying TICKER and official K_1M subscriptions push into a bounded memory
+cache, independent of chain collection and SQLite writes. The cloud price API
+merges these observed trades/candles and polls every2 seconds; Spot retains its
+own real trade timestamp. Unchanged historical candles are not rewritten to
+SQLite. Visible roots get foreground collection priority while other default
+roots continue archival collection. Replay excludes these live overlays.
+
 The symbol picker is a dark watchlist with observed Last/Chg/Chg%, search and
 the original validated OpenD-code input. Structural ladder markers share the
 underlying price positions with the Spot marker, and combine coincident roles.
