@@ -79,7 +79,7 @@ const strikeHover=new StrikeHoverCard({target:$('trinity'),load:spec=>spec.sourc
   requestJson('strike-history',spec.symbol,AbortSignal.timeout(30000),{metric:spec.metric??'GEX',strike:spec.strike,expiries:spec.expiries.join(','),date:spec.date,asof:spec.asof}):
   Promise.resolve({net_gex:spec.net_gex,sparkline_points:[],reason:'Demo · no recorded strike history'})});
 
-const relay = location.hostname==='127.0.0.1'&&location.protocol==='http:'?location.origin:'http://127.0.0.1:8766';
+const relay = location.origin;
 const px = n => finite(n) ? n.toLocaleString('en-US', {maximumFractionDigits:4, useGrouping:false}) : '—';
 const count = n => finite(n) ? n.toLocaleString('en-US') : '—';
 const cash = n => {
