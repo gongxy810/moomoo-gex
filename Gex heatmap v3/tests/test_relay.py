@@ -11,7 +11,7 @@ from http.server import ThreadingHTTPServer
 from functools import partial
 from unittest.mock import patch
 from market import Calendar, quote, symbol_code
-from relay import contracts_from_chain, summarize, implied_reference, OpenDFeed, SnapshotManager, MODEL, cache_identity, supplemental_close
+from relay import contracts_from_chain, summarize, implied_reference, OpenDFeed, SnapshotManager, MODEL, cache_identity, supplemental_close, default_history_symbols
 from snapshots import SnapshotStore
 from opend_board import handler, PRIVATE_ORIGIN
 from providers import RoutedPriceProvider
@@ -20,6 +20,14 @@ def dt(s):
     return datetime.fromisoformat(s.replace('Z','+00:00')).astimezone(timezone.utc)
 
 class MarketTests(unittest.TestCase):
+    def test_cloud_history_defaults_and_index_alias_deduplication(self):
+        with patch.dict('os.environ', {'GEX_CLOUD':'1'}, clear=True):
+            self.assertEqual(set(default_history_symbols()), {'SPXW','SPY','QQQ','IWM','AAPL','MSFT','NVDA','AMZN','GOOGL','META','TSLA'})
+        with patch.dict('os.environ', {'GEX_CLOUD':'1','GEX_HISTORY_SYMBOLS':'SPX,SPXW,SPY,SPY'}, clear=True):
+            self.assertEqual(default_history_symbols(), ('SPXW','SPY'))
+        with patch.dict('os.environ', {}, clear=True):
+            self.assertEqual(default_history_symbols(), ('SPY','QQQ','SPXW'))
+
     def test_shared_capture_serves_persisted_frame_and_joins_inflight_refresh(self):
         with tempfile.TemporaryDirectory() as folder:
             store=SnapshotStore(Path(folder)/'captures.sqlite3')

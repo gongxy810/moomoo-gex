@@ -19,6 +19,18 @@ from providers import OpenDPriceProvider, RoutedPriceProvider
 
 MODEL = 'OI-gamma-100-unadjusted-v1'
 CAPTURE_VERSION = 'gex-collection-wide-v3'
+CLOUD_HISTORY_SYMBOLS = ('SPY', 'QQQ', 'SPXW', 'IWM', 'AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA')
+
+
+def default_history_symbols():
+    if os.environ.get('GEX_CLOUD') != '1':
+        return ('SPY', 'QQQ', 'SPXW')
+    configured = os.environ.get('GEX_HISTORY_SYMBOLS')
+    values = configured.split(',') if configured is not None else CLOUD_HISTORY_SYMBOLS
+    # SPX and SPXW are two UI entries for the same option root.
+    return tuple(dict.fromkeys(symbol_code(value.strip())[0] for value in values if value.strip()))
+
+
 SNAPSHOT_INTERVAL = 1.0  # Official quota: 60 calls / 30s, <=400 codes; keep 50% call headroom.
 SNAPSHOT_LOCK = Lock()
 LAST_SNAPSHOT_AT = 0.0
@@ -511,7 +523,8 @@ class OpenDFeed:
 
 class SnapshotManager:
     """Shared per-process capture owner. HTTP readers never wait for the OpenD option chain."""
-    def __init__(self, feed, interval=30, watched=('SPY','QQQ','SPXW')):
+    def __init__(self, feed, interval=30, watched=None):
+        watched = default_history_symbols() if watched is None else watched
         self.feed,self.interval=feed,interval
         self.lock=RLock();self.pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-capture')
         self.latest={};self.jobs={};self.status={};self.price_latest={};self.price_jobs={};self.price_status={}

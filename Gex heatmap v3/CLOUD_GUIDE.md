@@ -9,6 +9,16 @@ website share this origin. The server still listens only on 127.0.0.1:8766.
 
 ## Responsibilities
 
+Cloud history collection runs without an open browser for SPXW, SPY, QQQ,
+IWM, AAPL, MSFT, NVDA, AMZN, GOOGL, META and TSLA. SPX uses the same SPXW
+option archive, not a duplicate collector; unavailable cash-index quotes are
+not fabricated. Optional server-only `GEX_HISTORY_SYMBOLS` is a comma-separated
+override. Collection remains serial with shared rate limits; 30 seconds is the
+minimum delay after completion, not a guaranteed per-symbol interval. Price bars,
+option captures and strike samples retain the existing rolling 10-calendar-day
+window in cloud SQLite; Supabase mirrors the latest snapshot only. New symbols
+accumulate history from activation, with no invented earlier option snapshots.
+
 - Windows: logged-in OpenD on 127.0.0.1:11111 and a forwarding-only SSH tunnel.
 - Cloud: shared collection, SQLite history, GEX/VEX, Zero Gamma, historical
   nodes, Velocity/Halo, touch counts and exposure center. Cloud analysis uses
