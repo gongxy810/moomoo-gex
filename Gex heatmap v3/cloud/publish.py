@@ -13,12 +13,13 @@ def execute(*args,**kwargs):
         kwargs.setdefault('stdout',sys.stdout);kwargs.setdefault('stderr',sys.stderr)
     return subprocess.run(*args,**kwargs)
 def sources():
+    patterns=[s.strip() for s in (ROOT/'.gitignore').read_text().splitlines() if s.strip() and not s.startswith('#')]
     for parent,dirs,files in os.walk(ROOT):
         dirs[:]=[d for d in dirs if d not in ('.git','.venv','node_modules','data','dist','__pycache__','browser-artifacts')]
         for name in files:
             p=Path(parent)/name;rel=p.relative_to(ROOT).as_posix()
             if p.is_symlink():raise RuntimeError('Review source symlink before publishing: '+rel)
-            if any((rel.startswith(v.rstrip('/')+'/') or ('/'+v.rstrip('/')+'/') in '/'+rel) if v.endswith('/') else fnmatch.fnmatch(rel,v) for v in PATTERNS):continue
+            if any((rel.startswith(v.rstrip('/')+'/') or ('/'+v.rstrip('/')+'/') in '/'+rel) if v.endswith('/') else fnmatch.fnmatch(rel,v) for v in patterns):continue
             yield p,rel
 def git_path():
     found=shutil.which('git')
@@ -81,5 +82,8 @@ if __name__=='__main__':
             time.sleep(3);current=fingerprint()
             if current!=previous:previous=current;changed=time.monotonic()
             if changed and time.monotonic()-changed>=20:
-                try:publish(a.message);changed=None
+                try:
+                    # Each batch runs current publisher code, even after editing it.
+                    python=str(Path(sys.executable).with_name('python.exe')) if os.name=='nt' else sys.executable
+                    execute([python,str(__file__),'--message',a.message],check=True);changed=None
                 except Exception as error:print(str(error),flush=True);changed=time.monotonic()+40
