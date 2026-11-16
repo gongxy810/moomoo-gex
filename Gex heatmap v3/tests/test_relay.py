@@ -20,6 +20,21 @@ def dt(s):
     return datetime.fromisoformat(s.replace('Z','+00:00')).astimezone(timezone.utc)
 
 class MarketTests(unittest.TestCase):
+    def test_sdk_connection_timeout_recreates_context_and_rebinds_call(self):
+        from types import SimpleNamespace
+        calls=[]
+        class Context:
+            def __init__(self,fail):self.fail=fail
+            def get_stock_quote(self,codes):
+                calls.append(self.fail)
+                return (-1,'Connect timeout') if self.fail else (0,[{'code':codes[0]}])
+        with tempfile.TemporaryDirectory() as folder:
+            feed=OpenDFeed(store=SnapshotStore(Path(folder)/'s.db'))
+            feed.sdk=SimpleNamespace(RET_OK=0);feed.ctx=Context(True)
+            feed.reconnect=lambda:setattr(feed,'ctx',Context(False))
+            self.assertEqual(feed.records(feed.ctx.get_stock_quote,['US.SPY']),[{'code':'US.SPY'}])
+            self.assertEqual(calls,[True,False])
+
     def test_fresh_subscribed_price_reuses_candles_without_sdk_download(self):
         from datetime import timedelta
         now=datetime.now(timezone.utc)

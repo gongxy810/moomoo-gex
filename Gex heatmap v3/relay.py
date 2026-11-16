@@ -194,7 +194,10 @@ class OpenDFeed:
                 pass
             import moomoo
             self.sdk = moomoo
-            self.ctx = moomoo.OpenQuoteContext(host='127.0.0.1', port=self.port)
+            # SDK defaults to an unlimited wait for reconnection. A dropped
+            # tunnel must fail a job and retry, never hold both collectors forever.
+            self.ctx = moomoo.OpenQuoteContext(host='127.0.0.1', port=self.port,is_async_connect=True)
+            self.ctx.set_sync_query_connect_timeout(8)
             if self.price_feed is not None:
                 self.option_stream = OptionStream(moomoo, self.ctx)
             else:self.price_ticks = PriceTickerStream(moomoo,self.ctx)
@@ -217,7 +220,7 @@ class OpenDFeed:
             if attempt == 0 and any(w in message.lower() for w in ['frequency', '频率', 'too frequent']):
                 sleep(3)
                 continue
-            if attempt==0 and any(w in message.lower() for w in ['disconnected','connection closed','broken pipe','连接断开','连接失败']):
+            if attempt==0 and any(w in message.lower() for w in ['disconnected','connection closed','broken pipe','timeout','连接断开','连接失败']):
                 self.reconnect();method=getattr(self.ctx,method.__name__);continue
             raise RuntimeError(message)
 
@@ -306,9 +309,7 @@ class OpenDFeed:
     def subscribe(self, code, subtype, push=False):
         key = (code, subtype, bool(push))
         if key not in self.subscriptions:
-            ret, message = self.ctx.subscribe([code], [subtype], subscribe_push=push, extended_time=True)
-            if ret != self.sdk.RET_OK:
-                raise RuntimeError(str(message))
+            self.records(self.ctx.subscribe,[code],[subtype],subscribe_push=push,extended_time=True)
             self.subscriptions.add(key)
 
     def spot(self, symbol, code, now, calendar, daily):
