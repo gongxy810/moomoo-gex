@@ -1,4 +1,4 @@
-import {cloudEnabled,cloudFor} from './cloud-client.js';
+import {cloudEnabled,cloudFor,compactCloudHistory} from './cloud-client.js';
 import {v3,installV3,decorateRow,structures} from './v3-ui.js';
 import {activeMetric,metricCell} from './model.js';
 import {classifyNodes,velocityBoard} from './structure.js';
@@ -35,7 +35,7 @@ const priceSymbols=()=>[...new Set([...selectedSymbols(),...(selectedSymbols().i
 const historyFor=symbol=>{
   const regular=state.histories[symbol]??state.frames.map(r=>r[symbol]).filter(Boolean);
   const dated=state.replayCursor!==null?state.replayHistories[`${symbol}|${marketDate(state.replayCursor)}`]:null;
-  return dated?[...new Map([...regular,...dated].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt)):regular;
+  return dated?mergeReplayFrames(regular,dated):regular;
 };
 const latestPrice=(frame,symbol)=>{
   const live=state.prices[symbol],snapshot=frame?.price;
@@ -560,12 +560,13 @@ function updateBundle(bundle) {
   const previous=state.frames.at(-1);
   for(const [symbol,frame] of Object.entries(bundle))if(previous?.[symbol]&&Date.parse(frame.collectedAt)<Date.parse(previous[symbol].collectedAt))bundle[symbol]=previous[symbol];
   if (!Object.keys(bundle).some(symbol=>bundle[symbol].collectedAt!==previous?.[symbol]?.collectedAt)) return;
-  state.frames.push(bundle);
+  if(cloudEnabled&&state.source==='opend')state.frames=[bundle];else state.frames.push(bundle);
   for(const [symbol,frame] of Object.entries(bundle)){
     const h=state.histories[symbol]??=[];
     if(!h.some(old=>old.collectedAt===frame.collectedAt))h.push(frame);
     h.sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
-    if(h.length>2000)state.histories[symbol]=retainHistory(h);
+    if(cloudEnabled&&state.source==='opend')state.histories[symbol]=compactCloudHistory(h);
+    else if(h.length>2000)state.histories[symbol]=retainHistory(h);
   }
   if (state.frames.length>2000) {
     state.frames.shift();
@@ -792,7 +793,9 @@ async function hydrateWindow(symbol,at){
     (async()=>{try{const data=await requestJson('history',symbol,AbortSignal.timeout(30000),{from:start,to:end,bucket:state.candleMinutes});
       if(state.source!=='opend'||generation!==state.sourceGeneration)return;
       state.histories[symbol]=[...new Map([...(data.frames??[]),...(state.histories[symbol]??[])].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
-      state.historyBounds[symbol]={start:Date.parse(start),end:Date.parse(end)};
+      if(cloudEnabled)state.histories[symbol]=compactCloudHistory(state.histories[symbol]);
+      if(cloudEnabled)state.histories[symbol]=compactCloudHistory(state.histories[symbol]);
+    state.historyBounds[symbol]={start:Date.parse(start),end:Date.parse(end)};
     }catch{}})(),
     (async()=>{try{const data=await requestJson('price-history',symbol,AbortSignal.timeout(30000),{from:start,to:end});
       if(state.source!=='opend'||generation!==state.sourceGeneration)return;
