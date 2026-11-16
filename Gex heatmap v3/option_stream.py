@@ -14,10 +14,20 @@ class OptionStream:
 
         class Handler(sdk.StockQuoteHandlerBase):
             def on_recv_rsp(self, rsp_pb):
-                ret, data = super().on_recv_rsp(rsp_pb)
-                if ret == sdk.RET_OK:
-                    owner.receive(data.to_dict('records'))
-                return ret, data
+                # Only instrument identity and quote time are needed to schedule
+                # a coherent snapshot. Building a 100-column pandas DataFrame
+                # for every push can consume an entire shared cloud CPU.
+                if rsp_pb.retType != sdk.RET_OK:
+                    return rsp_pb.retType, rsp_pb.retMsg
+                from moomoo.common.utils import merge_qot_mkt_stock_str
+                rows=[]
+                for quote in rsp_pb.s2c.basicQotList:
+                    parts=quote.updateTime.split()
+                    if len(parts)!=2:continue
+                    rows.append({'code':merge_qot_mkt_stock_str(int(quote.security.market),quote.security.code),
+                                 'data_date':parts[0],'data_time':parts[1]})
+                owner.receive(rows)
+                return sdk.RET_OK, rows
 
         self.handler = Handler()
         ctx.set_handler(self.handler)

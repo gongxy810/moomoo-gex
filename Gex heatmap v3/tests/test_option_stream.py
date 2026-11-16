@@ -5,6 +5,21 @@ from option_stream import OptionStream
 
 
 class OptionStreamTests(unittest.TestCase):
+    def test_pinned_sdk_push_protocol_avoids_dataframe_conversion(self):
+        import moomoo
+        from moomoo.common.pb import Qot_UpdateBasicQot_pb2
+        from moomoo.common.utils import split_stock_str
+        class Context:
+            def set_handler(self,handler):self.handler=handler
+        ctx=Context();stream=OptionStream(moomoo,ctx)
+        code='US.SPY261120C760000';stream.owners[code]='SPY'
+        message=Qot_UpdateBasicQot_pb2.Response();message.retType=0
+        q=message.s2c.basicQotList.add();_,(market,stock)=split_stock_str(code)
+        q.security.market=market;q.security.code=stock
+        q.updateTime=(datetime.now(ET)-timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S')
+        ret,rows=ctx.handler.on_recv_rsp(message)
+        self.assertEqual(ret,0);self.assertEqual(rows[0]['code'],code)
+        self.assertEqual(stream.version('SPY'),1)
     def test_bounded_pairs_subscription_rotation_and_stale_push(self):
         class SDK:
             RET_OK = 0
