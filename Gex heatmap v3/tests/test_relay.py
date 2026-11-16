@@ -77,6 +77,7 @@ class MarketTests(unittest.TestCase):
             self.assertEqual(calls,[True,False])
 
     def test_fresh_subscribed_price_reuses_candles_without_sdk_download(self):
+        from types import SimpleNamespace
         from datetime import timedelta
         now=datetime.now(timezone.utc)
         at=now.isoformat();bar={'at':at,'o':100,'h':101,'l':99,'c':100.5}
@@ -86,9 +87,15 @@ class MarketTests(unittest.TestCase):
             store=SnapshotStore(Path(folder)/'s.db');feed=OpenDFeed(store=store)
             feed.price_cache['SPY']=(monotonic()-20,price)
             feed.push_price=lambda frame,symbol:frame
+            feed.ctx=SimpleNamespace(get_cur_kline='bars')
+            feed.sdk=SimpleNamespace(KLType=SimpleNamespace(K_1M='1m'),AuType=SimpleNamespace(NONE='NONE'))
+            counts=[]
+            def records(method,code,num,**kwargs):counts.append(num);return []
+            feed.records=records
             feed.connect=lambda:self.fail('Fresh subscribed bars must not redownload SDK history')
             self.assertEqual(feed._opend_price('SPY')['spot']['value'],100.5)
             self.assertEqual(store.latest_price('SPY')['bars'][0]['c'],100.5)
+            self.assertEqual(counts,[2])
 
     def test_cloud_metadata_history_does_not_retain_every_raw_chain(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -390,6 +390,21 @@ class OpenDFeed:
                 0<=(now-stamp(spot.get('at'))).total_seconds()<=15 and
                 0<=(now-stamp(bars[-1]['at'])).total_seconds()<=120 and
                 0<=(now-stamp(cached[1]['collectedAt'])).total_seconds()<120):
+                # Some OpenD sessions stop pushing K_1M while trades continue.
+                # Repair only the two latest official candles, not 1000 bars.
+                with self.lock:
+                    try:
+                        recent=self.records(self.ctx.get_cur_kline,code,2,ktype=self.sdk.KLType.K_1M,autype=self.sdk.AuType.NONE)
+                        calendar=self.calendars.get((code.split('.')[0],str(now.astimezone(ET).date())))
+                        patched=[]
+                        for row in recent:
+                            at=stamp(row.get('time_key'));values=[positive(row.get(k)) for k in ('open','high','low','close')]
+                            if at and at<=datetime.now(timezone.utc) and all(values):
+                                patched.append(dict(at=iso(at),o=values[0],h=values[1],l=values[2],c=values[3],phase=calendar.phase(at) if calendar else spot.get('phase')))
+                        if patched:
+                            bars=sorted({b['at']:b for b in [*bars,*patched]}.values(),key=lambda b:b['at'])[-2000:]
+                            updated={**updated,'bars':bars,'barAt':bars[-1]['at']}
+                    except RuntimeError:pass
                 self.store.save_price(symbol,bars[-2:],{k:v for k,v in updated.items() if k!='bars'})
                 self.price_cache[symbol]=(monotonic(),updated)
                 return updated
