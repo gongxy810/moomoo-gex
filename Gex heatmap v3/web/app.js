@@ -510,6 +510,8 @@ function render(recenter = false) {
     return [symbol,result];
   }));
   const view=viewFor(bundle?.[state.symbol]),frame=view.frame;
+  // Reserve an analysis slot for the focused chart before the three ladders.
+  if(cloudEnabled&&state.source==='opend')cloudFor(frame,view.dates,state,requestJson,scheduleRender,activeMetric,'chart');
   $('center').textContent=state.center;
   const expiryMenu=$('expiry');
   const fixed=[['0dte','0DTE'],['front','Front'],['week','Next 7 days']];

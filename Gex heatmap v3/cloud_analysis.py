@@ -3,14 +3,18 @@ import json,subprocess,os
 from pathlib import Path
 from contextlib import closing
 from datetime import datetime,timedelta,timezone
-from threading import Lock,BoundedSemaphore
+from threading import RLock
 
 class CloudAnalysis:
-    def __init__(self,store):self.store=store;self.lock=Lock();self.cache={};self.slots=BoundedSemaphore(4)
-    def compute(self,*args,**kwargs):
-        if not self.slots.acquire(blocking=False):return {'available':False,'reason':'Cloud calculation busy; retry shortly'}
-        try:return self._compute(*args,**kwargs)
-        finally:self.slots.release()
+    def __init__(self,store):self.store=store;self.lock=RLock();self.cache={}
+    def compute(self,symbol,dates,asof,capture,metric,minutes,top,threshold,session,scope='chart'):
+        key=(symbol,tuple(dates),asof,capture,metric,minutes,top,threshold,session,scope)
+        # Completed immutable answers remain readable while another context runs.
+        if key in self.cache:return self.cache[key]
+        # No queue of obsolete Replay computations behind the one CPU worker.
+        if not self.lock.acquire(blocking=False):return {'available':False,'reason':'Cloud calculation busy; retry shortly'}
+        try:return self._compute(symbol,dates,asof,capture,metric,minutes,top,threshold,session,scope)
+        finally:self.lock.release()
     def _compute(self,symbol,dates,asof,capture,metric,minutes,top,threshold,session,scope='chart'):
         at=datetime.fromisoformat(asof.replace('Z','+00:00'))
         if at.tzinfo is None or metric not in ('GEX','VEX') or minutes not in (1,2,5,15) or top not in (3,5,10) or not 0<=threshold<=100:raise ValueError('Invalid analysis context')
