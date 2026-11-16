@@ -182,7 +182,7 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                         result=manager.request_price(symbol) if manager else feed.price(symbol)
                         if os.environ.get('GEX_CLOUD')=='1':result={**result,'bars':result.get('bars',[])[-3:]}
                         last=(result.get('bars') or [{}])[-1]
-                        return self.json_response(result,cache_key=('price',symbol,result.get('collectedAt'),(result.get('spot') or {}).get('at'),(result.get('spot') or {}).get('value'),last.get('at'),last.get('h'),last.get('l'),last.get('c'),json.dumps(result.get('service',{}),sort_keys=True)))
+                        return self.json_response(result,cache_key=('price',symbol,result.get('collectedAt'),len(result.get('bars',[])),(result.get('bars') or [{}])[0].get('at'),(result.get('spot') or {}).get('at'),(result.get('spot') or {}).get('value'),last.get('at'),last.get('h'),last.get('l'),last.get('c'),json.dumps(result.get('service',{}),sort_keys=True)))
                     if path.path in ('/api/snapshot','/api/refresh'):
                         force=path.path=='/api/refresh'
                         expiry=parse_qs(path.query).get('expiry',[None])[0]

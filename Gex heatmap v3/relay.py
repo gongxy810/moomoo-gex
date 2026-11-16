@@ -434,7 +434,12 @@ class OpenDFeed:
             except RuntimeError as error:
                 warnings.append('K 线不可用 · '+str(error))
             pipeline['bars']=round(monotonic()-stage,3)
+            if cached:
+                # A short OpenD subscription buffer must never erase candles
+                # already recovered from official minute history.
+                bars=list({b['at']:b for b in [*cached[1].get('bars',[]),*bars]}.values())
             bars.sort(key=lambda b: b['at'])
+            bars=bars[-2000:]
             if spot is None and bars:
                 last = bars[-1]
                 spot = {'value': last['c'], 'at': last['at'], 'phase': last['phase'], 'status': 'REF',
