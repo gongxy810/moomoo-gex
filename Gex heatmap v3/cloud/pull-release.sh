@@ -31,8 +31,10 @@ sudo -n cp "$release/cloud/gex-board.service" /etc/systemd/system/gex-board.serv
 sudo -n systemctl daemon-reload
 sudo -n systemctl restart gex-board.service
 for attempt in $(seq 1 30); do
-  if curl -fsS http://127.0.0.1:8766/api/health | "$environment/bin/python" -c 'import json,sys; h=json.load(sys.stdin); assert h["relay"] and h["currentOnDisk"]'; then
+  if curl -fsS --connect-timeout 2 --max-time 4 http://127.0.0.1:8766/api/health 2>/dev/null | "$environment/bin/python" -c 'import json,sys; h=json.load(sys.stdin); assert h["relay"] and h["currentOnDisk"]' 2>/dev/null; then
     printf '%s\n' "$commit" > "$root/deployed-sha"
+    install -m 755 "$release/cloud/pull-release.sh" "$root/pull-release.next"
+    mv -Tf "$root/pull-release.next" "$root/pull-release.sh"
     exit 0
   fi
   sleep 1

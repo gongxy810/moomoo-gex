@@ -571,6 +571,8 @@ class SnapshotManager:
                 frame=self.feed.store.latest(symbol)
                 if frame and frame.get('model')==MODEL and frame.get('symbol')==symbol and frame.get('optionRoot') and frame.get('dates') and all(frame.get('cacheKey',cache_identity(frame)).get(k)==cache_identity(frame).get(k) for k in ('symbol','optionRoot','dates','model')):
                     self.latest[symbol]=frame
+                    mirror=getattr(self.feed,'mirror',None)
+                    if mirror:mirror.submit(frame)
             job=self.jobs.get(symbol)
             if job and not job.done():return self._response(symbol)
             state=self.status.get(symbol,{})
