@@ -16,6 +16,7 @@ import signal
 from datetime import date,datetime
 from zoneinfo import ZoneInfo
 from contextlib import closing
+from threading import Lock
 from market import symbol_code
 from relay import OpenDFeed, SnapshotManager
 from providers import tempest_payload
@@ -35,13 +36,24 @@ LOADED_REVISION=source_revision()
 
 def handler(feed, origin, web_port=WEB_PORT, manager=None):
     analysis=CloudAnalysis(feed.store)
+    response_cache={};response_lock=Lock()
     allowed_hosts={f'{LOOPBACK}:{web_port}',urlsplit(origin).netloc}
     class Handler(SimpleHTTPRequestHandler):
-        def json_response(self, result, code=200, store_ms=None):
+        def json_response(self, result, code=200, store_ms=None, cache_key=None):
             started=monotonic()
-            body = json.dumps(result, allow_nan=False).encode('utf-8')
-            encoded=(len(body)>4096 and 'gzip' in self.headers.get('Accept-Encoding','').lower())
-            if encoded:body=gzip.compress(body,compresslevel=1)
+            accepts_gzip='gzip' in self.headers.get('Accept-Encoding','').lower()
+            key=(cache_key,accepts_gzip)
+            def encode():
+                body=json.dumps(result,allow_nan=False).encode('utf-8')
+                encoded=len(body)>4096 and accepts_gzip
+                return (gzip.compress(body,compresslevel=1) if encoded else body),encoded
+            if cache_key:
+                with response_lock:
+                    if key not in response_cache:
+                        response_cache[key]=encode()
+                        while len(response_cache)>32:response_cache.pop(next(iter(response_cache)))
+                    body,encoded=response_cache[key]
+            else:body,encoded=encode()
             self.send_response(code)
             self.cors()
             self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -169,7 +181,7 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                     if path.path == '/api/price':
                         result=manager.request_price(symbol) if manager else feed.price(symbol)
                         if os.environ.get('GEX_CLOUD')=='1':result={**result,'bars':result.get('bars',[])[-3:]}
-                        return self.json_response(result)
+                        return self.json_response(result,cache_key=('price',symbol,result.get('collectedAt'),json.dumps(result.get('service',{}),sort_keys=True)))
                     if path.path in ('/api/snapshot','/api/refresh'):
                         force=path.path=='/api/refresh'
                         expiry=parse_qs(path.query).get('expiry',[None])[0]
@@ -189,7 +201,7 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                         if os.environ.get('GEX_CLOUD')=='1':
                             result={k:v for k,v in result.items() if k!='bars'}
                             if result.get('price'):result['price']={**result['price'],'bars':result['price'].get('bars',[])[-3:]}
-                        return self.json_response(result)
+                        return self.json_response(result,cache_key=('snapshot',symbol,result.get('collectedAt'),json.dumps(result.get('service',{}),sort_keys=True)))
                     return self.json_response({'error': 'Unknown API'}, 404)
                 except ValueError as error:
                     return self.json_response({'error': str(error),'category':'INVALID_CODE'}, 400)

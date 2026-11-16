@@ -932,14 +932,17 @@ async function loadReplayDay(at){
     const key=`${symbol}|${day}`,bounds=state.replayWindowBounds[key];
     if(bounds&&at>=bounds.start&&at<=bounds.end||pending.has(key))return;
     pending.add(key);scheduleRender();const from=new Date(bounds&&at>bounds.end?bounds.end-40*60000:at-10*3600000).toISOString(),to=new Date(at).toISOString();
-    try{const [data,price]=await Promise.all([
-      requestJson('history',symbol,AbortSignal.timeout(30000),{from,to,bucket:state.candleMinutes,full:'1'}),
-      requestJson('price-history',symbol,AbortSignal.timeout(30000),{from,to})]);
+    try{const priceTask=requestJson('price-history',symbol,AbortSignal.timeout(30000),{from,to}).then(price=>{
+      if(generation===state.sourceGeneration&&state.source==='opend'&&state.replayDateOrder.includes(day)){mergePrice(symbol,price,false);scheduleRender();}
+    }).catch(error=>console.info('gex-replay-price',error.message));
+      const data=await requestJson('history',symbol,AbortSignal.timeout(90000),{from,to,bucket:state.candleMinutes,full:'1'});
+      await priceTask;
       if(generation!==state.sourceGeneration||state.source!=='opend'||!state.replayDateOrder.includes(day))return;
       state.replayHistories[key]=mergeReplayFrames(state.replayHistories[key]??[],data.frames??[]);
-      mergePrice(symbol,price,false);
       state.replayWindowBounds[key]={start:Math.min(bounds?.start??Infinity,Date.parse(from)),end:Math.max(bounds?.end??0,at)};
-    }catch(error){console.info('gex-replay-history',error.message);}finally{pending.delete(key);}
+    }catch(error){console.info('gex-replay-history',error.message);
+      setTimeout(()=>{if(generation===state.sourceGeneration&&state.replayCursor!==null&&marketDate(state.replayCursor)===day)void loadReplayDay(state.replayCursor);},3000);
+    }finally{pending.delete(key);}
   }));if(generation===state.sourceGeneration&&state.replayCursor!==null){render();if(state.replayCursor!==at)setTimeout(()=>loadReplayDay(state.replayCursor),0);}
 }
 function enterReplayFromInputs(){
