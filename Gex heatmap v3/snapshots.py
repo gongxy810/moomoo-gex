@@ -195,7 +195,8 @@ class SnapshotStore:
                 for key in ('price','bars','listedStrikes'):frame.pop(key,None)
             frames[frame['collectedAt']]=frame
         with closing(self.connect()) as db:
-            rows=db.execute('''SELECT frame FROM captures WHERE symbol=? AND at IN (
+            projection="json_remove(frame,'$.price','$.bars','$.listedStrikes','$.cells','$.basisHistory')" if metadata else 'frame'
+            rows=db.execute(f'''SELECT {projection} FROM captures WHERE symbol=? AND at IN (
                 SELECT MAX(at) FROM captures WHERE symbol=? AND at>=? AND at<=?
                 GROUP BY CAST(strftime('%s',at)/(?*60) AS INTEGER)
                 UNION SELECT at FROM captures WHERE symbol=? AND at>=? AND at<=?) ORDER BY at''',

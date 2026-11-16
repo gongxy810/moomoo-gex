@@ -78,7 +78,11 @@ class CloudAnalysis:
                     if (at-quoted).total_seconds()>900:history_end=min(at,quoted+timedelta(seconds=90))
                 start=(history_end-(timedelta(minutes=32) if scope=='ladder' else timedelta(hours=12))).isoformat()
                 # Cursor iteration avoids materializing raw quote frames as a list.
-                records=db.execute('SELECT frame FROM captures WHERE symbol=? AND at IN (SELECT MAX(at) FROM captures WHERE symbol=? AND at>=? AND julianday(at)<=julianday(?) GROUP BY CAST(strftime(\'%s\',at)/60 AS INTEGER)) ORDER BY at',(symbol,symbol,start,history_end.isoformat()))
+                records=db.execute('''SELECT json_remove(json_set(frame,'$.expiryCloses',
+                    json_patch(COALESCE(json_extract(frame,'$.price.sessions'),'{}'),COALESCE(json_extract(frame,'$.expiryCloses'),'{}'))),
+                    '$.price','$.bars','$.listedStrikes','$.basisHistory') FROM captures
+                    WHERE symbol=? AND at IN (SELECT MAX(at) FROM captures WHERE symbol=? AND at>=? AND julianday(at)<=julianday(?)
+                    GROUP BY CAST(strftime('%s',at)/60 AS INTEGER)) ORDER BY at''',(symbol,symbol,start,history_end.isoformat()))
                 history=[]
                 for raw, in records:
                     f=json.loads(raw)
