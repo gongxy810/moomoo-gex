@@ -9,6 +9,15 @@ website share this origin. The server still listens only on 127.0.0.1:8766.
 
 ## Responsibilities
 
+Option QUOTE push subscriptions select up to six paired ATM strikes from the
+nearest unexpired sampled expiry per root (12 contracts/root, global cap156).
+Live quote timestamps within120 seconds mark that root dirty; repeated events
+coalesce, with a minimum10-second post-completion delay before triggering a
+fresh full-chain snapshot. Existing snapshot rate limits and single-worker
+queue still apply. No partial Greek overlay or historical backfill is performed.
+Subscription failures preserve periodic snapshots. `optionStream` in each new
+snapshot reports subscribed contracts, accepted push count/time and errors.
+
 Cloud history collection runs without an open browser for SPXW, SPY, QQQ,
 IWM, AAPL, MSFT, NVDA, AMZN, GOOGL, META and TSLA. SPX uses the same SPXW
 option archive, not a duplicate collector; unavailable cash-index quotes are

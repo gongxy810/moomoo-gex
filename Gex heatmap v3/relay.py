@@ -16,6 +16,7 @@ from exposures import vex_cell
 from supabase_sink import LatestMirror
 from spx_calibration import calibration_reference
 from providers import OpenDPriceProvider, RoutedPriceProvider
+from option_stream import OptionStream
 
 MODEL = 'OI-gamma-100-unadjusted-v1'
 CAPTURE_VERSION = 'gex-collection-wide-v3'
@@ -173,6 +174,7 @@ class OpenDFeed:
         self.port, self.ctx, self.sdk = port, None, None
         self.cache, self.chains, self.price_cache, self.calendars, self.daily_cache = {}, {}, {}, {}, {}
         self.subscriptions, self.lock = set(), RLock()
+        self.option_stream = None
         self.store = store or SnapshotStore(Path(os.environ.get('GEX_DATA_DIR',str(Path(__file__).parent/'data')))/'captures.sqlite3')
         self.mirror=LatestMirror() if not price_only else None
         self.last_snapshot = 0
@@ -190,6 +192,8 @@ class OpenDFeed:
             import moomoo
             self.sdk = moomoo
             self.ctx = moomoo.OpenQuoteContext(host='127.0.0.1', port=self.port)
+            if self.price_feed is not None:
+                self.option_stream = OptionStream(moomoo, self.ctx)
             print(json.dumps({'event':'opend-connect','seconds':round(monotonic()-started,3),'role':'price' if self.price_feed is None else 'options'}),flush=True)
 
     def records(self, method, *args, **kwargs):
@@ -217,7 +221,7 @@ class OpenDFeed:
         if self.ctx:
             try:self.ctx.close()
             except Exception:pass
-        self.ctx=None;self.subscriptions.clear();self.connect()
+        self.ctx=None;self.option_stream=None;self.subscriptions.clear();self.connect()
 
     def validate(self, raw):
         """Separate SDK connection/lock. Never downloads a chain, Greeks or OHLC here."""
@@ -484,6 +488,8 @@ class OpenDFeed:
                 near.update(k for k in strikes if abs(k/spot['value']-1)<=.08 and abs(k/step-round(k/step))<1e-8)
                 chosen.update({c: spec for c, spec in chain.items() if spec[0]==expiry and spec[1] in near})
             rows = []
+            if self.option_stream:
+                self.option_stream.configure(symbol, chosen, spot['value'])
             stage=monotonic()
             for offset in range(0, len(chosen), 400):
                 try:
@@ -505,6 +511,8 @@ class OpenDFeed:
                     'dates': dates, 'availableDates': available, 'cells': cells, 'bars': price['bars'],
                     'price': price, 'warnings': warnings, 'refreshSeconds': 30, 'pipeline':pipeline, **calendar.payload(start)}
             frame['expiryCloses']={d:iso(calendar.close(d)) for d in dates if calendar.close(d)}
+            if self.option_stream:
+                frame['optionStream'] = self.option_stream.status(symbol)
             frame['listedStrikes']={d:sorted({k for e,k,_ in chain.values() if e==d}) for d in dates}
             for cell in cells:
                 vex=vex_cell(cell,frame)
@@ -528,6 +536,7 @@ class SnapshotManager:
         self.feed,self.interval=feed,interval
         self.lock=RLock();self.pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-capture')
         self.latest={};self.jobs={};self.status={};self.price_latest={};self.price_jobs={};self.price_status={}
+        self.stream_versions={}
         self.price_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-price')
         self.always=set(watched) if os.environ.get('GEX_CLOUD')=='1' else set()
         self.watched={symbol:monotonic() for symbol in watched}
@@ -589,9 +598,14 @@ class SnapshotManager:
             job=self.jobs.get(symbol)
             if job and not job.done():return self._response(symbol)
             state=self.status.get(symbol,{})
-            if force or not state or monotonic()-state.get('finishedMono',0)>=self.interval:
+            stream=getattr(self.feed,'option_stream',None)
+            version=stream.version(symbol) if stream else 0
+            elapsed=monotonic()-state.get('finishedMono',0)
+            triggered=version!=self.stream_versions.get(symbol,0) and elapsed>=10
+            if force or triggered or not state or elapsed>=self.interval:
+                self.stream_versions[symbol]=version
                 self.status[symbol]={**state,'phase':'collecting','startedAt':iso(datetime.now(timezone.utc))}
-                self.jobs[symbol]=self.pool.submit(self._collect,symbol,force)
+                self.jobs[symbol]=self.pool.submit(self._collect,symbol,force or triggered)
             return self._response(symbol)
 
     def _response(self,symbol):
