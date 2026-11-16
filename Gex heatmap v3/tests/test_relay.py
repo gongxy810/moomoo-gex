@@ -20,6 +20,17 @@ def dt(s):
     return datetime.fromisoformat(s.replace('Z','+00:00')).astimezone(timezone.utc)
 
 class MarketTests(unittest.TestCase):
+    def test_cloud_metadata_history_does_not_retain_every_raw_chain(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store=SnapshotStore(Path(folder)/'s.db')
+            for minute in range(10):
+                at=f'2026-11-13T15:{minute:02d}:00+00:00'
+                store.save({'symbol':'SPY','collectedAt':at,'sessionDate':'2026-11-13','usable':1,
+                    'sessionClose':'2026-11-13T21:00:00+00:00','cells':[{'strike':100,'expiry':'2026-11-13','call':1,'put':-2}]})
+            frames=store.window('SPY','2026-11-13T15:00:00+00:00','2026-11-13T15:10:00+00:00',metadata=True)
+            self.assertEqual(sum(bool(f['cells']) for f in frames),1)
+            self.assertEqual(frames[-1]['cells'][0]['call'],1)
+            self.assertEqual(store.latest('SPY')['cells'][0]['put'],-2)
     def test_far_expiry_catalog_and_requested_chain_are_not_limited_to_six_dates(self):
         from types import SimpleNamespace
         near='2026-11-16';far='2028-01-21'

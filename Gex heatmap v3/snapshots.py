@@ -168,41 +168,55 @@ class SnapshotStore:
         return [frames[key] for key in sorted(frames)]
 
     def latest(self, symbol):
-        with self.lock, closing(self.connect()) as db:
+        with closing(self.connect()) as db:
             row=db.execute('SELECT frame FROM captures WHERE symbol=? ORDER BY at DESC LIMIT 1',(symbol,)).fetchone()
         return json.loads(row[0]) if row else None
 
     def latest_price(self,symbol):
-        with self.lock, closing(self.connect()) as db:
+        with closing(self.connect()) as db:
             row=db.execute('SELECT meta FROM price_meta WHERE symbol=?',(symbol,)).fetchone()
             bars=db.execute('SELECT bar FROM price_bars WHERE symbol=? ORDER BY at DESC LIMIT 1000',(symbol,)).fetchall()
         if not row:return None
         return {**json.loads(row[0]),'bars':[json.loads(b[0]) for b in reversed(bars)]}
 
-    def window(self, symbol, start, end, bucket_minutes=5, recent_minutes=40, include_closes=True, full=False):
+    def window(self, symbol, start, end, bucket_minutes=5, recent_minutes=40, include_closes=True, full=False, metadata=False):
         """Only actual captures; one last capture per older chart bucket plus all recent Velocity inputs."""
         if bucket_minutes not in (1,2,5,15) or not start or not end or start>end:
             raise ValueError('Invalid history window')
         newest=datetime.fromisoformat(end.replace('Z','+00:00'))
         recent=(newest-timedelta(minutes=recent_minutes)).isoformat()
-        with self.lock, closing(self.connect()) as db:
+        frames={}
+        def keep(raw):
+            frame=json.loads(raw)
+            if metadata:
+                age=(datetime.fromisoformat(frame['sessionClose'].replace('Z','+00:00'))-datetime.fromisoformat(frame['collectedAt'].replace('Z','+00:00'))).total_seconds() if frame.get('sessionClose') else -1
+                if not 0<=age<=90:
+                    frame['cells']=[];frame['cloudMeta']=True
+                for key in ('price','bars','listedStrikes'):frame.pop(key,None)
+            frames[frame['collectedAt']]=frame
+        with closing(self.connect()) as db:
             rows=db.execute('''SELECT frame FROM captures WHERE symbol=? AND at IN (
                 SELECT MAX(at) FROM captures WHERE symbol=? AND at>=? AND at<=?
                 GROUP BY CAST(strftime('%s',at)/(?*60) AS INTEGER))
                 UNION SELECT frame FROM captures WHERE symbol=? AND at>=? AND at<=?''',
-                (symbol,symbol,start,end,bucket_minutes,symbol,recent,end)).fetchall()
+                (symbol,symbol,start,end,bucket_minutes,symbol,recent,end))
+            for raw, in rows:keep(raw)
             if include_closes:
                 closes=db.execute('''SELECT frame FROM captures WHERE symbol=? AND
                     julianday(json_extract(frame,'$.sessionClose'))-julianday(at) BETWEEN 0 AND 90.0/86400 AND julianday(at)<=julianday(?)
-                    ORDER BY at''',(symbol,end)).fetchall()
-                rows.extend(closes)
-                rows.extend(db.execute('SELECT frame FROM close_archives WHERE symbol=? AND at<=? ORDER BY day DESC LIMIT 2',(symbol,end)).fetchall())
-        frames={f['collectedAt']:f for row in rows if (f:=json.loads(row[0]))}
+                    ORDER BY at''',(symbol,end))
+                for raw, in closes:keep(raw)
+                for raw, in db.execute('SELECT frame FROM close_archives WHERE symbol=? AND at<=? ORDER BY day DESC LIMIT 2',(symbol,end)):keep(raw)
+            if metadata and frames:
+                newest=max(frames)
+                row=db.execute('SELECT frame FROM captures WHERE symbol=? AND at=?',(symbol,newest)).fetchone()
+                if row:frames[newest]=json.loads(row[0])
         basis_history=[]
         if symbol=='SPXW':
-            with self.lock, closing(self.connect()) as db, db:
+            with closing(self.connect()) as db:
                 for day in sorted({f['sessionDate'] for f in frames.values()}):
-                    self.basis_day(db,day)
+                    if not metadata:
+                        with self.lock, db:self.basis_day(db,day)
                     basis_history.extend(json.loads(r[0]) for r in db.execute("SELECT DISTINCT anchor FROM spx_basis_anchors WHERE json_extract(anchor,'$.day')=? AND julianday(json_extract(anchor,'$.at'))<=julianday(?)",(day,end)) if r[0]!='null')
                 for at,frame in frames.items():
                     row=db.execute('SELECT anchor FROM spx_basis_anchors WHERE at=?',(at,)).fetchone()
@@ -210,7 +224,7 @@ class SnapshotStore:
         result=[]
         for key in sorted(frames):
             frame=frames[key]
-            if symbol == 'SPXW' and 'calibration' not in frame:
+            if symbol == 'SPXW' and not frame.get('cloudMeta') and 'calibration' not in frame:
                 # Reconstruct only from quotes actually saved in this capture.
                 frame['calibration'] = calibration_reference(frame.get('cells', []),frame['collectedAt'],
                     (frame.get('price') or {}).get('sessions', {}))
@@ -231,7 +245,7 @@ class SnapshotStore:
             self.cleanup(db)
 
     def price_history(self, symbol, start=None, end=None):
-        with self.lock, closing(self.connect()) as db:
+        with closing(self.connect()) as db:
             bars=db.execute('SELECT bar FROM price_bars WHERE symbol=? AND at>=? AND at<=? ORDER BY at',
                 (symbol,start or '',end or '9999')).fetchall()
             row=db.execute('SELECT meta FROM price_meta WHERE symbol=?',(symbol,)).fetchone()

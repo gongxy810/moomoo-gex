@@ -11,6 +11,8 @@ from time import monotonic
 import os
 import hashlib
 import gzip
+import faulthandler
+import signal
 from datetime import date,datetime
 from zoneinfo import ZoneInfo
 from contextlib import closing
@@ -156,7 +158,7 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                             for value in [start,end]:
                                 if datetime.fromisoformat(value.replace('Z','+00:00')).tzinfo is None:raise ValueError('History range needs timezone')
                             frames=feed.store.window(symbol,start,end,int(query.get('bucket',['5'])[0]),
-                                full=query.get('full',['0'])[0]=='1')
+                                full=query.get('full',['0'])[0]=='1',metadata=os.environ.get('GEX_CLOUD')=='1')
                         else:frames=feed.store.history(symbol,day=requested_day)
                         if os.environ.get('GEX_CLOUD')=='1':
                             for f in frames:
@@ -210,6 +212,8 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
 
 
 def main():
+    if hasattr(signal,'SIGUSR1'):
+        faulthandler.register(signal.SIGUSR1, all_threads=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--opend-port', type=int, default=11111)
     parser.add_argument('--web-port', type=int, default=WEB_PORT)
