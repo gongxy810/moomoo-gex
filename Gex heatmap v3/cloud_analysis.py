@@ -10,7 +10,8 @@ class CloudAnalysis:
     def compute(self,symbol,dates,asof,capture,metric,minutes,top,threshold,session,scope='chart'):
         key=(symbol,tuple(dates),asof,capture,metric,minutes,top,threshold,session,scope)
         # Completed immutable answers remain readable while another context runs.
-        if key in self.cache:return self.cache[key]
+        cached=self.cache.get(key)
+        if cached is not None:return cached
         # No queue of obsolete Replay computations behind the one CPU worker.
         if not self.lock.acquire(blocking=False):return {'available':False,'reason':'Cloud calculation busy; retry shortly'}
         try:return self._compute(symbol,dates,asof,capture,metric,minutes,top,threshold,session,scope)
