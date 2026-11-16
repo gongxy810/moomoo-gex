@@ -179,6 +179,7 @@ try{
     assert.equal(Number(await evaluate("document.querySelector('#plot').dataset.cursor")),Date.parse(live?'2026-11-13T17:00:00Z':'2026-11-09T17:00:00Z'));
     await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'G',shiftKey:true,bubbles:true}))");
     await until("document.querySelectorAll('[data-metric=GEX]').length>5");
+    if(live&&liveUrl.includes('.ts.net'))await until("Number(document.querySelector('#plot').dataset.candles)>30 && Number(document.querySelector('#plot').dataset.nodeAuditCount)>0 && !document.querySelector('#chart-message').textContent.includes('Cloud calculation updating')");
     const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,live?'v3-live.png':'v3-features.png'),Buffer.from(shot.data,'base64'));
     assert.deepEqual(exceptions,[]);const heap=await send('Runtime.getHeapUsage');console.log(JSON.stringify({verified:'V3 controls, metric, context menu, Replay cutoff and keyboard',jsHeapMB:Math.round(heap.usedSize/1048576),url:live?liveUrl:'fixture'}));
   }
