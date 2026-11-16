@@ -9,9 +9,18 @@ ROOT=Path(__file__).resolve().parents[1]
 PATTERNS=[s.strip() for s in (ROOT/'.gitignore').read_text().splitlines() if s.strip() and not s.startswith('#')]
 def execute(*args,**kwargs):
     if os.name=='nt':kwargs.setdefault('creationflags',subprocess.CREATE_NO_WINDOW)
-    if sys.stdout is not None and sys.stdout.fileno()!=1:
-        kwargs.setdefault('stdout',sys.stdout);kwargs.setdefault('stderr',sys.stderr)
-    return subprocess.run(*args,**kwargs)
+    # Explicit pipes also work under pythonw and inherited Windows task handles.
+    # Git's credential-helper subprocess must never inherit an invalid console.
+    output_requested='stdout' in kwargs;error_requested='stderr' in kwargs
+    check=kwargs.pop('check',False)
+    kwargs.setdefault('stdout',subprocess.PIPE);kwargs.setdefault('stderr',subprocess.PIPE)
+    result=subprocess.run(*args,**kwargs)
+    if not output_requested and result.stdout and sys.stdout:
+        sys.stdout.write(result.stdout.decode(errors='replace'));sys.stdout.flush()
+    if not error_requested and result.stderr and sys.stderr:
+        sys.stderr.write(result.stderr.decode(errors='replace'));sys.stderr.flush()
+    if check and result.returncode:raise subprocess.CalledProcessError(result.returncode,args[0])
+    return result
 def sources():
     patterns=[s.strip() for s in (ROOT/'.gitignore').read_text().splitlines() if s.strip() and not s.startswith('#')]
     for parent,dirs,files in os.walk(ROOT):
