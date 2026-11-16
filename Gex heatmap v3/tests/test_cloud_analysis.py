@@ -7,6 +7,20 @@ from cloud_analysis import CloudAnalysis
 from test_zero_gamma import fixture,AT,EXP,END
 
 class CloudTests(unittest.TestCase):
+    def test_queue_replaces_obsolete_cursor_and_prioritizes_replay_chart(self):
+        engine=CloudAnalysis(None)
+        # Suppress worker startup so admission and replacement are deterministic.
+        engine.worker=object()
+        args=['SPY',[EXP],AT,AT,'GEX',5,5,10,'ALL','chart']
+        self.assertTrue(engine.request(*args,replay=True,client='tab')['pending'])
+        args[2]='2026-11-13T16:30:00Z'
+        engine.request(*args,replay=True,client='tab')
+        self.assertEqual(len(engine.pending),1)
+        self.assertEqual(next(iter(engine.pending.values()))[0][2],args[2])
+        engine.running=next(iter(engine.pending.values()))[0]
+        engine.request(*args,replay=True,client='tab')
+        self.assertFalse(engine.pending)
+
     def test_old_archives_keep_verified_expiry_times_and_quote_iv_for_vex(self):
         with TemporaryDirectory() as folder:
             store=SnapshotStore(Path(folder)/'s.db');f=fixture()
