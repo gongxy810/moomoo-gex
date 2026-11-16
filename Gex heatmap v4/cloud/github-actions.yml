@@ -41,7 +41,7 @@ jobs:
           test -d "$GITHUB_WORKSPACE/Gex heatmap v4/web"
           rsync -a --delete "$GITHUB_WORKSPACE/Gex heatmap v4/web/" "$worktree/Gex heatmap v3/web/"
           rsync -a --delete "$GITHUB_WORKSPACE/Gex heatmap v4/tests/" "$worktree/Gex heatmap v3/tests/"
-          git -C "$worktree" add -A -- 'Gex heatmap v3/web'
+          git -C "$worktree" add -A -- 'Gex heatmap v3/web' 'Gex heatmap v3/tests'
           git -C "$worktree" -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m 'Deploy V4 dashboard UI with the current data backend'
           git -C "$worktree" tag -f gex-v3-tested HEAD
           git -C "$worktree" push origin refs/tags/gex-v3-tested --force
