@@ -197,8 +197,8 @@ class SnapshotStore:
         with closing(self.connect()) as db:
             rows=db.execute('''SELECT frame FROM captures WHERE symbol=? AND at IN (
                 SELECT MAX(at) FROM captures WHERE symbol=? AND at>=? AND at<=?
-                GROUP BY CAST(strftime('%s',at)/(?*60) AS INTEGER))
-                UNION SELECT frame FROM captures WHERE symbol=? AND at>=? AND at<=?''',
+                GROUP BY CAST(strftime('%s',at)/(?*60) AS INTEGER)
+                UNION SELECT at FROM captures WHERE symbol=? AND at>=? AND at<=?) ORDER BY at''',
                 (symbol,symbol,start,end,bucket_minutes,symbol,recent,end))
             for raw, in rows:keep(raw)
             if include_closes:
