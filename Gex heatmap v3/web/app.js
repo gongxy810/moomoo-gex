@@ -561,7 +561,9 @@ function render(recenter = false) {
   if (frame?.source==='opend' && !spot?.current) flags.unshift(`${state.symbol} · ${spot?.label??'等待有效价格'}`);
   if (state.expiry==='0dte' && frame && !view.dates.length) flags.push('No same-day expiry in this capture. Choose Front to see the nearest listed date.');
   if (!frame && !state.busy && !flags.length) flags.push('Start the local companion to view OpenD data.');
-  $('notice').textContent=flags.join('  |  ');
+  if(state.computeMode==='local'&&state.computeHistoryLoading)flags.push('Local analysis: loading today’s stored option snapshots.');
+  if(state.computeMode==='local'&&state.errors['compute:'+state.symbol])flags.push('Local history load failed: '+state.errors['compute:'+state.symbol]);
+  $('notice').textContent=`${state.computeMode==='local'?'LOCAL COMPUTE':'CLOUD COMPUTE'}  |  `+flags.join('  |  ');
   const feed=$('feed-state');
   feed.className='pill '+(frame?.source==='opend'&&spot?.current&&!flags.length?'good':'warn');
   feed.textContent=state.source==='demo'?'Synthetic demo':state.index!==null?'Replay':
@@ -987,7 +989,7 @@ async function start(){
   setTimeout(()=>{for(const symbol of [state.symbol,...priceSymbols().filter(s=>s!==state.symbol)])void hydrate(symbol);},1200);
 }
 $('range').value=String(state.limit);$('speed').value=String(state.speed);
-new DarkSelect($('range'),'Strikes');new DarkSelect($('speed'),'GEX Velocity');
+new DarkSelect($('range'),'Strikes');new DarkSelect($('speed'),'GEX Velocity');new DarkSelect($('compute-mode'),'Compute');
 new DarkSelect($('expiry'),'Expiry Date');new DarkSelect($('candle-period'),'Timeframe');
 new DarkSelect($('replay-speed'),'Replay Speed');
 function loadLocalComputeHistory(symbol){
@@ -1007,10 +1009,12 @@ computeMode.onchange=()=>{
   try{localStorage.setItem('gex-compute-mode',state.computeMode);}catch{}
   state.nodeCache=null;state.computeHistoryLoading=false;
   if(state.computeMode==='local'&&cloudEnabled&&state.source==='opend'){
-    for(const symbol of new Set([...selectedSymbols(),...(state.symbol==='SPXW'?['SPY']:[])]))void loadLocalComputeHistory(symbol);
+    const symbols=new Set([...selectedSymbols(),...(state.symbol==='SPXW'?['SPY']:[])]);state.computeHistoryLoading=symbols.size>0;
+    void Promise.all([...symbols].map(symbol=>loadLocalComputeHistory(symbol))).finally(()=>{state.computeHistoryLoading=false;scheduleRender();});
   }
   scheduleRender();
 };
+if(state.computeMode==='local'&&cloudEnabled&&state.source==='opend')setTimeout(()=>computeMode.onchange(),0);
 if(state.computeMode==='local'&&cloudEnabled&&state.source==='opend')setTimeout(()=>computeMode.onchange(),0);
 const replayIntervalPicker=new DarkSelect($('replay-period'),'Replay update interval');
 if(replayIntervalPicker.list){

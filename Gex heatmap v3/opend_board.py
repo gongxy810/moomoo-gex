@@ -162,6 +162,7 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                         return self.json_response(tempest_payload(symbol))
                     if path.path == '/api/history':
                         query=parse_qs(path.query)
+                        raw_history=query.get('raw',['0'])[0]=='1'
                         requested_day=query.get('date',[None])[0]
                         if requested_day:date.fromisoformat(requested_day)
                         start=query.get('from',[None])[0];end=query.get('to',[None])[0]
@@ -170,9 +171,9 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                             for value in [start,end]:
                                 if datetime.fromisoformat(value.replace('Z','+00:00')).tzinfo is None:raise ValueError('History range needs timezone')
                             frames=feed.store.window(symbol,start,end,int(query.get('bucket',['5'])[0]),
-                                full=query.get('full',['0'])[0]=='1',metadata=os.environ.get('GEX_CLOUD')=='1')
+                                full=query.get('full',['0'])[0]=='1',metadata=os.environ.get('GEX_CLOUD')=='1' and not raw_history)
                         else:frames=feed.store.history(symbol,day=requested_day)
-                        if os.environ.get('GEX_CLOUD')=='1':
+                        if os.environ.get('GEX_CLOUD')=='1' and not raw_history:
                             for f in frames:
                                 if f is not frames[-1] and not (0<=(datetime.fromisoformat(f['sessionClose'].replace('Z','+00:00'))-datetime.fromisoformat(f['collectedAt'].replace('Z','+00:00'))).total_seconds()<=90):
                                     f['cells']=[];f['cloudMeta']=True
