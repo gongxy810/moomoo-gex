@@ -14,6 +14,8 @@ export function metricCell(cell,frame){
 }
 export const symbols = ['SPXW', 'SPY', 'QQQ'];
 export const pollMs = 30000;
+// Receipt/capture time can be older while a subscribed quote is newer.
+export const priceTimestamp=price=>Date.parse(price?.spot?.at??price?.quoteAt??price?.collectedAt??'')||-Infinity;
 export const finite = value => typeof value === 'number' && Number.isFinite(value);
 const colors = [[65, 15, 88], [53, 83, 124], [43, 142, 129], [117, 193, 112], [252, 231, 83]];
 

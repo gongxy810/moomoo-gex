@@ -1,7 +1,7 @@
 import {cloudEnabled,cloudFor,compactCloudHistory,prepareCloudFrame} from './cloud-client.js';
 import {symbolRows} from './symbol-list.js';
 import {v3,installV3,decorateRow,structures} from './v3-ui.js';
-import {activeMetric,metricCell} from './model.js';
+import {activeMetric,metricCell,priceTimestamp} from './model.js';
 import {classifyNodes,velocityBoard} from './structure.js';
 import { symbols, pollMs, finite, datesFor, nearest, sum, net, groups, king, velocity, nodeCandidates,
   baseline, palette, termPalette, demoFrame, rowVelocity, dayChange, walls, retainHistory, strikeView, viewSettings, aggregateBars } from './model.js';
@@ -40,7 +40,7 @@ const historyFor=symbol=>{
 };
 const latestPrice=(frame,symbol)=>{
   const live=state.prices[symbol],snapshot=frame?.price;
-  const current=!live?snapshot:Date.parse(live.collectedAt??0)>=Date.parse(snapshot?.collectedAt??frame?.collectedAt??0)?live:snapshot??live;
+  const current=!live?snapshot:priceTimestamp(live)>=priceTimestamp(snapshot)?live:snapshot??live;
   const cached=state.priceHistory[symbol];
   return cached?.bars?.length?{...cached,...current,bars:cached.bars,sessions:{...cached.sessions,...current?.sessions}}:current;
 };
@@ -809,7 +809,7 @@ $('node-threshold').onchange=event=>{state.threshold=Number(event.target.value);
 const priceRepairs=new Map(),repairedPriceVersions=new Map();
 function mergePrice(symbol,price,live=true){
   const current=state.prices[symbol];
-  if(live&&(!current||Date.parse(price.collectedAt??0)>=Date.parse(current.collectedAt??0)))state.prices[symbol]=price;
+  if(live&&(!current||priceTimestamp(price)>=priceTimestamp(current)))state.prices[symbol]=price;
   const previous=state.priceHistory[symbol]??{},bars=[...new Map([...(previous.bars??[]),...(price.bars??[])].map(b=>[b.at,b])).values()].sort((a,b)=>Date.parse(a.at)-Date.parse(b.at)).slice(-20000);
   state.priceHistory[symbol]={...previous,...price,...state.prices[symbol],bars,sessions:{...previous.sessions,...price.sessions,...state.prices[symbol]?.sessions},
     dailyCloses:[...new Map([...(previous.dailyCloses??[]),...(price.dailyCloses??[])].map(d=>[d.date,d])).values()]};
