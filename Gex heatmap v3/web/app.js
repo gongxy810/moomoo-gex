@@ -17,6 +17,8 @@ const WALL_KING_LINE_STYLE=2; // Lightweight Charts LineStyle.Dashed
 const zeroGammaCache=new Map();let zeroGammaPending=false;
 const state = {symbol:'SPXW', source:'opend', expiry:'0dte', limit:40, frames:[], index:null,
   derived:true, cone:false, pinned:null, errors:{}, busy:false, center:'Spot', speed:5};
+try{state.computeMode=localStorage.getItem('gex-compute-mode')==='local'?'local':'cloud';}catch{state.computeMode='cloud';}
+const useCloudAnalysis=()=>cloudEnabled&&state.source==='opend'&&state.computeMode==='cloud';
 let timer, controller, priceTimer, priceGeneration=0;
 let renderQueued=false,detailView=null,detailsVisible=false;
 try{Object.assign(state,viewSettings(JSON.parse(localStorage.getItem('gex-view')??'{}')));}catch{}
@@ -134,7 +136,7 @@ function viewFor(frame, expiry = state.expiry) {
 }
 
 function renderLadder(column, data, previous) {
-  const cloud=cloudEnabled&&state.source==='opend';
+  const cloud=useCloudAnalysis();
   const symbol=column.symbol;
   const {frame, dates, strikes, shown, peak} = viewFor(data);
   const remote=cloud?cloudFor(frame,dates,state,requestJson,scheduleRender,activeMetric,'ladder'):null;
@@ -264,7 +266,7 @@ function zeroGammaFor(frame,dates){
 }
 
 function renderChart(view) {
-  const cloud=cloudEnabled&&state.source==='opend';
+  const cloud=useCloudAnalysis();
   const chartStarted=performance.now();
   const frame=view.frame,spot=frame?.spot,at=state.replayCursor??(state.source==='demo'?Date.parse(frame?.collectedAt):Date.now()),replay=state.replayCursor!==null;
   const daily=dayChange(frame),label=spotLabel(state.symbol,spot);
@@ -511,7 +513,7 @@ function render(recenter = false) {
   }));
   const view=viewFor(bundle?.[state.symbol]),frame=view.frame;
   // Reserve an analysis slot for the focused chart before the three ladders.
-  if(cloudEnabled&&state.source==='opend')cloudFor(frame,view.dates,state,requestJson,scheduleRender,activeMetric,'chart');
+  if(useCloudAnalysis())cloudFor(frame,view.dates,state,requestJson,scheduleRender,activeMetric,'chart');
   $('center').textContent=state.center;
   const expiryMenu=$('expiry');
   const fixed=[['0dte','0DTE'],['front','Front'],['week','Next 7 days']];
@@ -586,12 +588,12 @@ function updateBundle(bundle) {
   const previous=state.frames.at(-1);
   for(const [symbol,frame] of Object.entries(bundle))if(previous?.[symbol]&&Date.parse(frame.collectedAt)<Date.parse(previous[symbol].collectedAt))bundle[symbol]=previous[symbol];
   if (!Object.keys(bundle).some(symbol=>bundle[symbol].collectedAt!==previous?.[symbol]?.collectedAt)) return;
-  if(cloudEnabled&&state.source==='opend')state.frames=[bundle];else state.frames.push(bundle);
+  if(cloudEnabled&&state.source==='opend'&&state.computeMode==='cloud')state.frames=[bundle];else state.frames.push(bundle);
   for(const [symbol,frame] of Object.entries(bundle)){
     const h=state.histories[symbol]??=[];
     if(!h.some(old=>old.collectedAt===frame.collectedAt))h.push(frame);
     h.sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
-    if(cloudEnabled&&state.source==='opend')state.histories[symbol]=compactCloudHistory(h);
+    if(cloudEnabled&&state.source==='opend'&&state.computeMode==='cloud')state.histories[symbol]=compactCloudHistory(h);
     else if(h.length>2000)state.histories[symbol]=retainHistory(h);
   }
   if (state.frames.length>2000) {
@@ -840,10 +842,10 @@ async function hydrateWindow(symbol,at){
   state.historyPending[symbol]=true;
   try{await Promise.all([
     refreshExpectedProvider(symbol),
-    (async()=>{try{const data=await requestJson('history',symbol,AbortSignal.timeout(30000),{from:start,to:end,bucket:state.candleMinutes});
+    (async()=>{try{const local=cloudEnabled&&state.computeMode==='local';const data=await requestJson('history',symbol,AbortSignal.timeout(local?90000:30000),{from:start,to:end,bucket:state.candleMinutes,...(local?{raw:'1',full:'1'}:{})});
       if(state.source!=='opend'||generation!==state.sourceGeneration)return;
       state.histories[symbol]=[...new Map([...(data.frames??[]),...(state.histories[symbol]??[])].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
-      if(cloudEnabled)state.histories[symbol]=compactCloudHistory(state.histories[symbol]);
+      if(cloudEnabled&&state.computeMode==='cloud')state.histories[symbol]=compactCloudHistory(state.histories[symbol]);
       state.historyBounds[symbol]={start:Date.parse(start),end:Date.parse(end)};
     }catch{}})(),
     (async()=>{try{const data=await requestJson('price-history',symbol,AbortSignal.timeout(30000),{from:start,to:end});
@@ -859,11 +861,11 @@ async function extendHistory(symbol,from,to){
   if(Date.parse(start)>=Date.parse(end))return;
   state.historyPending[symbol]=true;const generation=state.sourceGeneration;
   try{const [history,price]=await Promise.all([
-    requestJson('history',symbol,AbortSignal.timeout(30000),{from:start,to:end,bucket:state.candleMinutes,full:state.replayCursor!==null?'1':'0'}),
+    requestJson('history',symbol,AbortSignal.timeout(cloudEnabled&&state.computeMode==='local'?90000:30000),{from:start,to:end,bucket:state.candleMinutes,full:state.replayCursor!==null||state.computeMode==='local'?'1':'0',...(cloudEnabled&&state.computeMode==='local'?{raw:'1'}:{})}),
     requestJson('price-history',symbol,AbortSignal.timeout(30000),{from:start,to:end})]);
     if(generation!==state.sourceGeneration||state.source!=='opend')return;
     state.histories[symbol]=[...new Map([...(history.frames??[]),...(state.histories[symbol]??[])].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
-    if(cloudEnabled)state.histories[symbol]=compactCloudHistory(state.histories[symbol]);
+    if(cloudEnabled&&state.computeMode==='cloud')state.histories[symbol]=compactCloudHistory(state.histories[symbol]);
     mergePrice(symbol,price,false);bound.start=Date.parse(start);scheduleRender();
   }catch(error){console.info('gex-history',error.message);}finally{delete state.historyPending[symbol];}
 }
