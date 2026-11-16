@@ -470,6 +470,8 @@ class OpenDFeed:
                 result['previousCloseUrl'] = supplement['url']
                 result['previousCloseKind'] = 'verified cash index daily close'
             result['sessions'] = {d:iso(calendar.close(d)) for d in calendar.days}
+            repair=self.intraday_repairs.get(code)
+            if repair and repair[2]:result['minuteHistoryRevision']=f'{repair[0]}:{repair[1]}'
             result['dailyCloses'] = [{'date':str(r.get('time_key',''))[:10],'close':positive(r.get('close'))} for r in daily]
             result['pipeline']={**pipeline,'queue':round(monotonic()-queued-sum(pipeline.values()),3)}
             self.store.save_price(symbol, bars, {k:v for k,v in result.items() if k!='bars'})

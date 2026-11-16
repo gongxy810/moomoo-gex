@@ -806,12 +806,25 @@ $('replay-period').onchange=event=>{state.replayInterval=Number(event.target.val
 for(const [id,key] of [['nodes','nodes'],['walls','walls'],['day-range','dayRange'],['two-sigma','twoSigma']])$(id).onchange=event=>{state[key]=event.target.checked;render();};
 $('node-top').onchange=event=>{state.top=Number(event.target.value);render();};
 $('node-threshold').onchange=event=>{state.threshold=Number(event.target.value);render();};
+const priceRepairs=new Map(),repairedPriceVersions=new Map();
 function mergePrice(symbol,price,live=true){
   const current=state.prices[symbol];
   if(live&&(!current||Date.parse(price.collectedAt??0)>=Date.parse(current.collectedAt??0)))state.prices[symbol]=price;
   const previous=state.priceHistory[symbol]??{},bars=[...new Map([...(previous.bars??[]),...(price.bars??[])].map(b=>[b.at,b])).values()].sort((a,b)=>Date.parse(a.at)-Date.parse(b.at)).slice(-20000);
   state.priceHistory[symbol]={...previous,...price,...state.prices[symbol],bars,sessions:{...previous.sessions,...price.sessions,...state.prices[symbol]?.sessions},
     dailyCloses:[...new Map([...(previous.dailyCloses??[]),...(price.dailyCloses??[])].map(d=>[d.date,d])).values()]};
+  const revision=price.minuteHistoryRevision;
+  // Live replies intentionally carry only three candles. Once OpenD repairs a
+  // disconnected session, fetch that repaired day once without clearing the chart.
+  if(live&&cloudEnabled&&state.source==='opend'&&state.replayCursor===null&&revision&&repairedPriceVersions.get(symbol)!==revision&&!priceRepairs.has(symbol)){
+    const generation=state.sourceGeneration;
+    const from=new Date(etTimestamp(marketDate(Date.now()),'04:00')).toISOString(),to=new Date().toISOString();
+    const task=requestJson('price-history',symbol,AbortSignal.timeout(30000),{from,to}).then(data=>{
+      if(generation!==state.sourceGeneration||state.source!=='opend'||state.replayCursor!==null)return;
+      mergePrice(symbol,data,false);repairedPriceVersions.set(symbol,revision);scheduleRender();
+    }).catch(()=>{}).finally(()=>priceRepairs.delete(symbol));
+    priceRepairs.set(symbol,task);
+  }
 }
 const hydrating=new Map();
 async function hydrate(symbol){
