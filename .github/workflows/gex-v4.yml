@@ -43,7 +43,8 @@ jobs:
           for test in model.test.mjs replay.test.mjs structure.test.mjs; do
             cp "$GITHUB_WORKSPACE/Gex heatmap v4/tests/$test" "$worktree/Gex heatmap v3/tests/$test"
           done
-          git -C "$worktree" add -A -- 'Gex heatmap v3/web' 'Gex heatmap v3/tests'
+          cp "$GITHUB_WORKSPACE/Gex heatmap v4/cloud/pull-release.sh" "$worktree/Gex heatmap v3/cloud/pull-release.sh"
+          git -C "$worktree" add -A -- 'Gex heatmap v3/web' 'Gex heatmap v3/tests' 'Gex heatmap v3/cloud/pull-release.sh'
           git -C "$worktree" -c user.name=github-actions[bot] -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m 'Deploy V4 dashboard UI with the current data backend'
           git -C "$worktree" tag -f gex-v3-tested HEAD
           git -C "$worktree" push origin refs/tags/gex-v3-tested --force
