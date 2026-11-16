@@ -9,6 +9,19 @@ website share this origin. The server still listens only on 127.0.0.1:8766.
 
 ## Responsibilities
 
+The symbol picker is a dark watchlist with observed Last/Chg/Chg%, search and
+the original validated OpenD-code input. Structural ladder markers share the
+underlying price positions with the Spot marker, and combine coincident roles.
+Replay playback waits for historical frames and focused-chart analysis before
+advancing; missing recorded chains or prior-close IV remain explicitly missing.
+
+Expiry menus use the entire OpenD expiration directory, rather than six sampled
+dates. Recent six expiries retain automatic collection. Selecting a dated expiry
+adds that expiry's chain and snapshots for that root; at most one additional
+selected expiry per root is retained in the active collection set. Far-expiry
+history starts when selected, and no uncollected earlier GEX is synthesized.
+This bounds the 1 GB server workload while allowing any listed expiry to load.
+
 Option QUOTE push subscriptions select up to six paired ATM strikes from the
 nearest unexpired sampled expiry per root (12 contracts/root, global cap156).
 Live quote timestamps within120 seconds mark that root dirty; repeated events
