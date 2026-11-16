@@ -20,6 +20,26 @@ def dt(s):
     return datetime.fromisoformat(s.replace('Z','+00:00')).astimezone(timezone.utc)
 
 class MarketTests(unittest.TestCase):
+    def test_reconnect_repairs_missing_minutes_without_inventing_gex(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as folder:
+            feed=OpenDFeed(store=SnapshotStore(Path(folder)/'s.db'),price_only=True)
+            feed.ctx=SimpleNamespace(request_history_kline='history')
+            feed.sdk=SimpleNamespace(KLType=SimpleNamespace(K_1M='1m'),AuType=SimpleNamespace(NONE='NONE'))
+            calls=[]
+            def records(*args,**kwargs):
+                calls.append(kwargs)
+                return [{'time_key':'2026-11-16 12:25:00','close':101},
+                        {'time_key':'2026-11-16 13:00:00','close':102},
+                        {'time_key':'2026-11-16 16:45:00','close':103}]
+            feed.records=records
+            live=[{'time_key':'2026-11-16 12:25:00','close':99},{'time_key':'2026-11-16 16:45:00','close':104}]
+            rows,error=feed.repair_intraday('US.SPY',live,dt('2026-11-16T21:45:30Z'))
+            self.assertIsNone(error);self.assertEqual([r['close'] for r in rows],[101,102,104])
+            feed.repair_intraday('US.SPY',rows,dt('2026-11-16T21:46:00Z'))
+            self.assertEqual(len(calls),1);self.assertTrue(calls[0]['extended_time'])
+            self.assertIsNone(feed.store.latest('SPY'))
+
     def test_sdk_connection_timeout_recreates_context_and_rebinds_call(self):
         from types import SimpleNamespace
         calls=[]

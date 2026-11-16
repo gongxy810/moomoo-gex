@@ -176,6 +176,7 @@ class OpenDFeed:
         self.subscriptions, self.lock = set(), RLock()
         self.option_stream = None
         self.price_ticks = None
+        self.intraday_repairs = {}
         self.expiry_lock = Lock()
         self.requested_expiries = {}
         self.store = store or SnapshotStore(Path(os.environ.get('GEX_DATA_DIR',str(Path(__file__).parent/'data')))/'captures.sqlite3')
@@ -228,7 +229,27 @@ class OpenDFeed:
         if self.ctx:
             try:self.ctx.close()
             except Exception:pass
-        self.ctx=None;self.option_stream=None;self.price_ticks=None;self.subscriptions.clear();self.connect()
+        self.ctx=None;self.option_stream=None;self.price_ticks=None;self.subscriptions.clear();self.intraday_repairs.clear();self.connect()
+
+    def repair_intraday(self,code,rows,now):
+        """Recover actual minute candles missed while the SDK was disconnected."""
+        if code=='US..SPX':return rows,None
+        day=now.astimezone(ET).date().isoformat()
+        previous=self.intraday_repairs.get(code)
+        if previous and previous[0]==day and (previous[2] or monotonic()-previous[1]<300):return rows,None
+        self.intraday_repairs[code]=(day,monotonic(),False)
+        try:
+            history=self.records(self.ctx.request_history_kline,code,start=day,end=day,
+                ktype=self.sdk.KLType.K_1M,autype=self.sdk.AuType.NONE,max_count=1000,extended_time=True)
+            merged={r['time_key']:r for r in rows}
+            merged.update({r['time_key']:r for r in history})
+            # Keep the newest official push for the still-open minute only.
+            for row in rows:
+                at=stamp(row.get('time_key'))
+                if at and at>=now.replace(second=0,microsecond=0):merged[row['time_key']]=row
+            self.intraday_repairs[code]=(day,monotonic(),bool(history))
+            return sorted(merged.values(),key=lambda r:r['time_key']),None
+        except RuntimeError as error:return rows,'Minute history repair unavailable: '+str(error)
 
     def validate(self, raw):
         """Separate SDK connection/lock. Never downloads a chain, Greeks or OHLC here."""
@@ -403,6 +424,8 @@ class OpenDFeed:
                 stage=monotonic()
                 self.subscribe(code, self.sdk.SubType.K_1M,push=True)
                 raw_bars = self.records(self.ctx.get_cur_kline, code, 1000, ktype=self.sdk.KLType.K_1M, autype=self.sdk.AuType.NONE)
+                raw_bars,repair_error=self.repair_intraday(code,raw_bars,now)
+                if repair_error:warnings.append(repair_error)
                 for b in raw_bars:
                     at = stamp(b.get('time_key'))
                     values = [positive(b.get(key)) for key in ['open', 'high', 'low', 'close']]
