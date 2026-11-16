@@ -17,6 +17,7 @@ def sources():
         dirs[:]=[d for d in dirs if d not in ('.git','.venv','node_modules','data','dist','__pycache__','browser-artifacts')]
         for name in files:
             p=Path(parent)/name;rel=p.relative_to(ROOT).as_posix()
+            if p.is_symlink():raise RuntimeError('Review source symlink before publishing: '+rel)
             if any((rel.startswith(v.rstrip('/')+'/') or ('/'+v.rstrip('/')+'/') in '/'+rel) if v.endswith('/') else fnmatch.fnmatch(rel,v) for v in PATTERNS):continue
             yield p,rel
 def git_path():
@@ -53,10 +54,16 @@ def _publish(message):
     run('pull','--ff-only','origin','main')
     run('config','core.autocrlf','false')
     target=repo/'Gex heatmap v3'
+    copied=set()
     for source,rel in sources():
         raw=source.read_bytes()
         if re.search(rb'-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----|github_pat_[A-Za-z0-9_]{30,}|gh[pousr]_[A-Za-z0-9]{30,}|sb_secret_[A-Za-z0-9_-]{20,}|postgres(?:ql)?://[^\s:]+:[^\s@]+@',raw):raise RuntimeError('Potential credential in '+rel)
         dest=target/rel;dest.parent.mkdir(parents=True,exist_ok=True);dest.write_bytes(raw)
+        copied.add(rel)
+    tracked=execute([git,'ls-files','-z','--','Gex heatmap v3'],cwd=repo,stdout=subprocess.PIPE,check=True).stdout.decode().split('\0')
+    for tracked_path in filter(None,tracked):
+        rel=tracked_path[len('Gex heatmap v3/'):];dest=(target/rel).resolve()
+        if rel not in copied and dest.is_relative_to(target.resolve()) and dest.is_file():dest.unlink()
     workflow=repo/'.github/workflows/gex-v3.yml';workflow.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(ROOT/'cloud/github-actions.yml',workflow)
     run('add','--','Gex heatmap v3','.github/workflows/gex-v3.yml')
     if execute([git,'diff','--cached','--quiet'],cwd=repo).returncode:
