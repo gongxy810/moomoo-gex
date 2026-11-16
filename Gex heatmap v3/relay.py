@@ -652,7 +652,7 @@ class SnapshotManager:
             if state.get('phase')=='error' and monotonic()-state.get('finishedMono',0)<30:needs_expiry=False
             if job and not job.done():
                 if (force or needs_expiry or interactive) and not job.running() and job.cancel():
-                    self.jobs[symbol]=self.priority_pool.submit(self._collect,symbol,True)
+                    self._submit_capture(symbol,True,self.priority_pool)
                 return self._response(symbol)
             force=force or needs_expiry
             stream=getattr(self.feed,'option_stream',None)
@@ -663,8 +663,21 @@ class SnapshotManager:
                 self.stream_versions[symbol]=version
                 self.status[symbol]={**state,'phase':'collecting','startedAt':iso(datetime.now(timezone.utc))}
                 pool=self.priority_pool if force or interactive else self.pool
-                self.jobs[symbol]=pool.submit(self._collect,symbol,force or triggered)
+                self._submit_capture(symbol,force or triggered,pool)
             return self._response(symbol)
+
+    def _submit_capture(self,symbol,force,pool):
+        future=pool.submit(self._collect,symbol,force)
+        self.jobs[symbol]=future
+        future.add_done_callback(lambda done:self._capture_finished(symbol,done))
+
+    def _capture_finished(self,symbol,future):
+        if future.cancelled():return
+        frame,status=future.result()
+        with self.lock:
+            if self.jobs.get(symbol) is not future:return
+            if frame:self.latest[symbol]=frame
+            self.status[symbol]=status
 
     def _response(self,symbol):
         frame=self.latest.get(symbol)
@@ -677,16 +690,15 @@ class SnapshotManager:
         started=monotonic()
         try:
             frame=self.feed.collect(symbol,force=force)
-            with self.lock:
-                self.latest[symbol]=frame
-                self.status[symbol]={'phase':'ready','finishedAt':iso(datetime.now(timezone.utc)),
-                    'finishedMono':monotonic(),'captureSeconds':round(monotonic()-started,3)}
+            status={'phase':'ready','finishedAt':iso(datetime.now(timezone.utc)),
+                'finishedMono':monotonic(),'captureSeconds':round(monotonic()-started,3)}
         except Exception as error:
-            with self.lock:
-                self.status[symbol]={'phase':'error','finishedAt':iso(datetime.now(timezone.utc)),
-                    'finishedMono':monotonic(),'captureSeconds':round(monotonic()-started,3),'error':str(error)}
-        print(json.dumps({'event':'background-capture','symbol':symbol,**{k:v for k,v in self.status[symbol].items() if k!='finishedMono'}},ensure_ascii=True),flush=True)
+            frame=None
+            status={'phase':'error','finishedAt':iso(datetime.now(timezone.utc)),
+                'finishedMono':monotonic(),'captureSeconds':round(monotonic()-started,3),'error':str(error)}
+        print(json.dumps({'event':'background-capture','symbol':symbol,**{k:v for k,v in status.items() if k!='finishedMono'}},ensure_ascii=True),flush=True)
         sleep(.01)  # Yield the shared SDK lock to a waiting foreground/archive worker.
+        return frame,status
 
     def close(self):
         self.closed=True;self.timer.join();self.pool.shutdown(wait=True,cancel_futures=True);self.priority_pool.shutdown(wait=True,cancel_futures=True);self.price_pool.shutdown(wait=True,cancel_futures=True)
