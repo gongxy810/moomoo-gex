@@ -182,6 +182,10 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                                 feed.requested_expiries[symbol]=expiry
                             force=force or changed
                         result=manager.request(symbol,force=force) if manager else feed.collect(symbol,force=force)
+                        since=parse_qs(path.query).get('since',[None])[0]
+                        if since and result.get('collectedAt')==since:
+                            return self.json_response({'source':'opend','symbol':symbol,'status':'unchanged',
+                                'collectedAt':since,'service':result.get('service',{})})
                         if os.environ.get('GEX_CLOUD')=='1':
                             result={k:v for k,v in result.items() if k!='bars'}
                             if result.get('price'):result['price']={**result['price'],'bars':result['price'].get('bars',[])[-3:]}

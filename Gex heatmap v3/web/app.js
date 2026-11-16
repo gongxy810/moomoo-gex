@@ -611,7 +611,10 @@ async function requestJson(path,symbol,signal,day){
 async function fetchSymbol(symbol,force=false){
   if(inflight.has(symbol))return inflight.get(symbol);
   const requested=/^\d{4}-\d{2}-\d{2}$/.test(state.expiry)&&state.replayCursor===null?{expiry:state.expiry}:{};
+  const previous=state.frames.at(-1)?.[symbol];
+  if(previous?.collectedAt)requested.since=previous.collectedAt;
   const pending=requestJson(force?'refresh':'snapshot',symbol,AbortSignal.timeout(15000),requested).then(data=>{
+    if(data.status==='unchanged'&&previous?.collectedAt===data.collectedAt)data={...previous,service:data.service};
     if(data.source!=='opend'||data.symbol!==symbol||(!Array.isArray(data.cells)&&data.status!=='loading'))throw new Error('Invalid OpenD response');return data;
   }).finally(()=>inflight.delete(symbol));inflight.set(symbol,pending);return pending;
 }
