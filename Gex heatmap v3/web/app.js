@@ -137,7 +137,7 @@ function renderLadder(column, data, previous) {
   const cloud=cloudEnabled&&state.source==='opend';
   const symbol=column.symbol;
   const {frame, dates, strikes, shown, peak} = viewFor(data);
-  const remote=cloud?cloudFor(frame,dates,state,requestJson,scheduleRender,activeMetric):null;
+  const remote=cloud?cloudFor(frame,dates,state,requestJson,scheduleRender,activeMetric,'ladder'):null;
   const rowRoles=remote?.roles??(cloud?{roles:new Map()}:classifyNodes(groups(frame,dates),frame?.spot?.value)),rowVelocities=remote?.velocity??(cloud?{entries:[]}:velocityBoard(frame,dates,historyFor(symbol)));
   const before = new Map(groups(previous, dates).map(row => [row.strike, row]));
   const old = document.querySelector(`[data-ladder="${column.id}"] .ladder-body`);

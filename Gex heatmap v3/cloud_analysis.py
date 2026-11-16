@@ -11,11 +11,12 @@ class CloudAnalysis:
         if not self.slots.acquire(blocking=False):return {'available':False,'reason':'Cloud calculation busy; retry shortly'}
         try:return self._compute(*args,**kwargs)
         finally:self.slots.release()
-    def _compute(self,symbol,dates,asof,capture,metric,minutes,top,threshold,session):
+    def _compute(self,symbol,dates,asof,capture,metric,minutes,top,threshold,session,scope='chart'):
         at=datetime.fromisoformat(asof.replace('Z','+00:00'))
         if at.tzinfo is None or metric not in ('GEX','VEX') or minutes not in (1,2,5,15) or top not in (3,5,10) or not 0<=threshold<=100:raise ValueError('Invalid analysis context')
         if session not in ('ALL','EXT','PRE','RTH','POST'):raise ValueError('Invalid session')
-        key=(symbol,tuple(dates),asof,capture,metric,minutes,top,threshold,session)
+        if scope not in ('chart','ladder'):raise ValueError('Invalid analysis scope')
+        key=(symbol,tuple(dates),asof,capture,metric,minutes,top,threshold,session,scope)
         with self.lock:
             if key in self.cache:return self.cache[key]
             with closing(self.store.connect()) as db:
@@ -28,7 +29,7 @@ class CloudAnalysis:
                 if frame.get('optionLastAt'):
                     quoted=datetime.fromisoformat(frame['optionLastAt'].replace('Z','+00:00'))
                     if (at-quoted).total_seconds()>900:history_end=min(at,quoted+timedelta(seconds=90))
-                start=(history_end-timedelta(hours=12)).isoformat()
+                start=(history_end-(timedelta(minutes=32) if scope=='ladder' else timedelta(hours=12))).isoformat()
                 # Cursor iteration avoids materializing raw quote frames as a list.
                 records=db.execute('SELECT frame FROM captures WHERE symbol=? AND at IN (SELECT MAX(at) FROM captures WHERE symbol=? AND at>=? AND julianday(at)<=julianday(?) GROUP BY CAST(strftime(\'%s\',at)/60 AS INTEGER)) ORDER BY at',(symbol,symbol,start,history_end.isoformat()))
                 history=[]
@@ -38,8 +39,8 @@ class CloudAnalysis:
                     f.pop('price',None);f.pop('bars',None);f.pop('listedStrikes',None)
                     f['cells']=[{k:v for k,v in c.items() if k in ('strike','expiry','call','put','callOi','putOi','callIv','putIv','complete','contracts')} for c in f.get('cells',[]) if c['expiry'] in dates]
                     history.append(f)
-            price=self.store.price_history(symbol,start,asof)
-            payload={'frame':frame,'dates':dates,'history':history,'bars':price['bars'],'at':at.timestamp()*1000,'metric':metric,'minutes':minutes,'top':top,'threshold':threshold,'session':session}
+            price=self.store.price_history(symbol,(at-timedelta(days=1)).isoformat() if scope=='ladder' else start,asof)
+            payload={'frame':frame,'dates':dates,'history':history,'bars':price['bars'],'at':at.timestamp()*1000,'metric':metric,'minutes':minutes,'top':top,'threshold':threshold,'session':session,'scope':scope}
             # Quotes only needed by current IV/Zero Gamma endpoints, not analysis.
             frame.pop('price',None)
             result=subprocess.run([os.environ.get('GEX_NODE','node'),'--max-old-space-size=256',str(Path(__file__).parent/'cloud'/'analysis.mjs')],input=json.dumps(payload,allow_nan=False).encode(),stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=60)

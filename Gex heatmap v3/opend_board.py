@@ -124,7 +124,7 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                         q=parse_qs(path.query);dates=q.get('expiries',[''])[0].split(',')
                         if len(dates)>12:raise ValueError('Too many expiries')
                         for expiry in dates:date.fromisoformat(expiry)
-                        return self.json_response(analysis.compute(symbol,dates,q['asof'][0],q['capture'][0],q.get('metric',['GEX'])[0],int(q.get('minutes',['5'])[0]),int(q.get('top',['5'])[0]),float(q.get('threshold',['10'])[0]),q.get('session',['ALL'])[0]))
+                        return self.json_response(analysis.compute(symbol,dates,q['asof'][0],q['capture'][0],q.get('metric',['GEX'])[0],int(q.get('minutes',['5'])[0]),int(q.get('top',['5'])[0]),float(q.get('threshold',['10'])[0]),q.get('session',['ALL'])[0],q.get('scope',['chart'])[0]))
                     if path.path == '/api/zero-gamma':
                         query=parse_qs(path.query);expiries=query.get('expiries',[''])[0].split(',')
                         if len(expiries)>12:raise ValueError('Too many expiries')

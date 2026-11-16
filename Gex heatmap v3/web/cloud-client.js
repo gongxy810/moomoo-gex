@@ -14,10 +14,10 @@ export function compactCloudHistory(frames,limit=400){
   if(basis.length&&result.length)result[0].basisHistory=basis;
   return result;
 }
-export function cloudFor(frame,dates,state,request,render,metric){
+export function cloudFor(frame,dates,state,request,render,metric,scope='chart'){
   if(!frame?.cells?.length||!dates.length)return null;
   const capture=frame.captureAt??frame.collectedAt,asof=new Date(state.replayCursor??Date.parse(capture)).toISOString();
-  const args={capture,asof,expiries:dates.join(','),metric,minutes:state.candleMinutes,top:state.top,threshold:state.threshold,session:state.chartSession};
+  const args={capture,asof,expiries:dates.join(','),metric,minutes:state.candleMinutes,top:state.top,threshold:state.threshold,session:state.chartSession,scope};
   const key=JSON.stringify([frame.symbol,args]);
   if(cache.has(key)){const value=cache.get(key);if(value.available||Date.now()<(value.retryAt??Infinity))return value;cache.delete(key);}
   if(!pending.has(key)&&pending.size<2){
