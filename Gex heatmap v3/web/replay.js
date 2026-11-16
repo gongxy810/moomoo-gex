@@ -26,7 +26,7 @@ export function spotLabel(symbol,spot){
 
 export function frameAt(symbol,history,price,cursor){
   const day=marketDate(cursor);
-  const capture=lastBefore(history.filter(f=>f.sessionDate===day&&(!f.optionLastAt||Date.parse(f.optionLastAt)<=cursor)),cursor);
+  const capture=lastBefore(history.filter(f=>!f.cloudMeta&&f.sessionDate===day&&(!f.optionLastAt||Date.parse(f.optionLastAt)<=cursor)),cursor);
   const sourceMinutes=price?.barMinutes??1;
   const closed=(price?.bars??[]).filter(b=>Date.parse(b.at)+sourceMinutes*60000<=cursor&&marketDate(Date.parse(b.at))===day);
   const lastBar=closed.at(-1);

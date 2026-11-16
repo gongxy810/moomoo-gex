@@ -13,6 +13,7 @@ import {runCorner} from './corner-acceptance.mjs';
 
 const artifacts=resolve('tests/browser-artifacts');await mkdir(artifacts,{recursive:true});
 const live=process.argv.includes('--live');
+const liveUrl=process.argv.find(a=>a.startsWith('--url='))?.slice(6)??'http://127.0.0.1:8766/';
 const extended=process.argv.includes('--extended');
 const dragOnly=process.argv.includes('--drag-only');
 const labelsOnly=process.argv.includes('--labels');
@@ -159,7 +160,7 @@ try{
   const until=async expression=>{for(let i=0;i<(live?1200:100);i++){if(await evaluate(expression))return;await wait(50);}throw new Error('Timed out: '+expression+' '+JSON.stringify({exceptions,state:await evaluate("({state:document.querySelector('#feed-state')?.textContent,notice:document.querySelector('#notice')?.textContent,rows:document.querySelectorAll('.strike-row').length})")}));};
   await send('Runtime.enable');await send('Page.enable');await send('Network.enable');
   if(!live)await send('Page.addScriptToEvaluateOnNewDocument',{source:design?`Date.now=()=>${designData.at};`:"Date.now=()=>Date.parse('2026-11-09T18:01:00Z');"});
-  await send('Page.navigate',{url:live?'http://127.0.0.1:8766/':`http://127.0.0.1:${server.address().port}`});
+  await send('Page.navigate',{url:live?liveUrl:`http://127.0.0.1:${server.address().port}`});
   await until("document.querySelectorAll('.ladder').length===3 && document.querySelectorAll('#plot canvas').length>0 && ("+(live?"true":"document.querySelector('#feed-state').textContent!=='Refreshing'")+")");
   if(v3Only){
     await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click()");
@@ -168,7 +169,7 @@ try{
     await evaluate("document.querySelector('#v3-metric').click()");
     await until("document.querySelectorAll('[data-metric=VEX]').length>5");
     await evaluate("document.querySelector('#v3-percent').click();document.querySelector('#v3-dim').click();document.querySelector('#v3-gravity').click();document.querySelector('#v3-gk').click()");
-    assert.ok(await evaluate("document.querySelector('.gex-amount').textContent.includes('King')"));
+    assert.ok(await evaluate("[...document.querySelectorAll('.gex-amount')].some(e=>e.textContent.includes('King'))"));
     await evaluate("document.querySelector('.strike-row').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:200,clientY:300}))");
     assert.ok(await evaluate("document.querySelector('#v3-context').textContent.includes('Raw')"));
     await evaluate("document.querySelector('#v3-context button').click()");
@@ -199,7 +200,7 @@ try{
       await until("JSON.parse(document.querySelector('#plot').dataset.zeroGamma||'{}').symbol==='QQQ'&&JSON.parse(document.querySelector('#plot').dataset.zeroGamma).available");
     }
     const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,live?'zero-gamma-live.png':'zero-gamma-fixture.png'),Buffer.from(shot.data,'base64'));
-    assert.deepEqual(exceptions,[]);console.log(JSON.stringify({address:live?'http://127.0.0.1:8766/':'synthetic fixture',info:live?{model:info.model,symbol:info.symbol,price:info.price,expiries:info.expiries,capture_at:info.capture_at,selected:info.selected}:info,exceptions}));
+    assert.deepEqual(exceptions,[]);console.log(JSON.stringify({address:live?liveUrl:'synthetic fixture',info:live?{model:info.model,symbol:info.symbol,price:info.price,expiries:info.expiries,capture_at:info.capture_at,selected:info.selected}:info,exceptions}));
   }
   else if(historyPan&&live){
     await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click();document.querySelector('#reset-chart-view').click()");await wait(1800);await until("!document.querySelector('#chart-message').textContent.includes('历史节点加载中')");
@@ -395,7 +396,7 @@ try{
       await evaluate("__testState.replayCursor=null;document.querySelector('#latest').click();__testRender()");await until("document.querySelector('#plot').dataset.cursor==='live'");
       replayCheck={spyReplay,spxReplay,afterExit:await stateOf()};
     }
-    const report={address:live?'http://127.0.0.1:8766/':`http://127.0.0.1:${server.address().port}/`,spyStart,spxButton,spyReturn,spxFocus,replayCheck,exceptions};
+    const report={address:live?liveUrl:`http://127.0.0.1:${server.address().port}/`,spyStart,spxButton,spyReturn,spxFocus,replayCheck,exceptions};
     await writeFile(resolve(artifacts,`focus-${tag}.json`),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
     if(!before){assert.equal(spyStart.activeSymbol,'SPY');assert.equal(spyStart.chartMode,'gex');assert.equal(spxButton.activeSymbol,'SPXW');assert.equal(spxButton.chartMode,'gex');assert.ok(spxButton.candles>0&&spxButton.title.includes('SPX proxy'));if(!live)assert.ok(spxButton.nodes>0);assert.equal(spxButton.iframe,null);assert.equal(spyReturn.activeSymbol,'SPY');assert.equal(spyReturn.chartMode,'gex');assert.equal(spxFocus.activeSymbol,'SPXW');assert.ok(spxFocus.candles>0);
       if(replayCheck){assert.equal(replayCheck.spyReplay.chartMode,'gex');assert.equal(replayCheck.spxReplay.chartMode,'gex');assert.equal(replayCheck.spyReplay.replayCursor,replayCheck.spxReplay.replayCursor);assert.equal(replayCheck.afterExit.chartMode,'gex');}

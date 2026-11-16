@@ -1,0 +1,30 @@
+[Unit]
+Description=GEX v3 cloud board
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sylviagong2019
+WorkingDirectory=/home/sylviagong2019/gex-cloud/current
+Environment=GEX_CLOUD=1
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=OMP_NUM_THREADS=1
+Environment=MKL_NUM_THREADS=1
+Environment=GEX_DATA_DIR=/home/sylviagong2019/gex-cloud/data
+Environment=GEX_NODE=/home/sylviagong2019/gex-cloud/runtime/node/bin/node
+EnvironmentFile=-/home/sylviagong2019/gex-cloud/cloud.env
+ExecStart=/home/sylviagong2019/moomoo-gex/venv/bin/python opend_board.py --origin https://instance-20261115-035258.tail29d8e5.ts.net
+Restart=on-failure
+RestartSec=10
+MemoryAccounting=true
+MemoryHigh=650M
+MemoryMax=850M
+MemorySwapMax=1G
+TasksMax=100
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

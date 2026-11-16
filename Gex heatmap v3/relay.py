@@ -9,9 +9,11 @@ import math
 import re
 import socket
 import json
+import os
 from market import Calendar, ET, iso, quote, stamp, symbol_code, verified_close
 from snapshots import SnapshotStore
 from exposures import vex_cell
+from supabase_sink import LatestMirror
 from spx_calibration import calibration_reference
 from providers import OpenDPriceProvider, RoutedPriceProvider
 
@@ -159,7 +161,8 @@ class OpenDFeed:
         self.port, self.ctx, self.sdk = port, None, None
         self.cache, self.chains, self.price_cache, self.calendars, self.daily_cache = {}, {}, {}, {}, {}
         self.subscriptions, self.lock = set(), RLock()
-        self.store = store or SnapshotStore(Path(__file__).parent/'data'/'captures.sqlite3')
+        self.store = store or SnapshotStore(Path(os.environ.get('GEX_DATA_DIR',str(Path(__file__).parent/'data')))/'captures.sqlite3')
+        self.mirror=LatestMirror() if not price_only else None
         self.last_snapshot = 0
         self.price_feed = None if price_only else OpenDFeed(port,self.store,price_only=True)
         self.price_provider = RoutedPriceProvider(OpenDPriceProvider(self.price_feed or self), spx_cash_provider)
@@ -362,7 +365,7 @@ class OpenDFeed:
                             'status': 'Close' if same else 'REF', 'current': False, 'comparable': same,
                             'source': 'OpenD unadjusted daily close', 'label': 'Verified daily close' if same else 'REF · old daily close'}
             previous = verified_close(daily, meta['previousSession'])
-            supplement = supplemental_close(Path(__file__).resolve().parent/'data'/'verified-index-closes.json', symbol, meta['previousSession']) if previous is None else None
+            supplement = supplemental_close(Path(os.environ.get('GEX_DATA_DIR',str(Path(__file__).parent/'data')))/'verified-index-closes.json', symbol, meta['previousSession']) if previous is None else None
             if supplement:
                 previous = float(supplement['close'])
             result = {'symbol': symbol, 'priceSymbol': 'SPX' if symbol=='SPXW' else symbol, 'source': 'OpenD',
@@ -501,6 +504,7 @@ class OpenDFeed:
             stage=monotonic()
             self.cache[symbol] = (monotonic(), frame)
             self.store.save(frame)
+            if self.mirror:self.mirror.submit(frame)
             pipeline['save']=round(monotonic()-stage,3)
             return frame
 
@@ -512,6 +516,7 @@ class SnapshotManager:
         self.lock=RLock();self.pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-capture')
         self.latest={};self.jobs={};self.status={};self.price_latest={};self.price_jobs={};self.price_status={}
         self.price_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-price')
+        self.always=set(watched) if os.environ.get('GEX_CLOUD')=='1' else set()
         self.watched={symbol:monotonic() for symbol in watched}
         self.closed=False
         self.timer=Thread(target=self._poll,name='gex-scheduler',daemon=True);self.timer.start()
@@ -522,7 +527,7 @@ class SnapshotManager:
         while not self.closed:
             sleep(1)
             if self.closed:return
-            with self.lock:active=[s for s,t in self.watched.items() if monotonic()-t<1800]
+            with self.lock:active=[s for s,t in self.watched.items() if s in self.always or monotonic()-t<1800]
             for symbol in active:
                 self.request(symbol,observe=False)
                 self.request_price(symbol,observe=False)
@@ -564,7 +569,7 @@ class SnapshotManager:
             if observe:self.watched[symbol]=monotonic()
             if symbol not in self.latest:
                 frame=self.feed.store.latest(symbol)
-                if frame and frame.get('model')==MODEL and frame.get('symbol')==symbol and frame.get('optionRoot') and frame.get('dates') and frame.get('cacheKey',cache_identity(frame))==cache_identity(frame):
+                if frame and frame.get('model')==MODEL and frame.get('symbol')==symbol and frame.get('optionRoot') and frame.get('dates') and all(frame.get('cacheKey',cache_identity(frame)).get(k)==cache_identity(frame).get(k) for k in ('symbol','optionRoot','dates','model')):
                     self.latest[symbol]=frame
             job=self.jobs.get(symbol)
             if job and not job.done():return self._response(symbol)

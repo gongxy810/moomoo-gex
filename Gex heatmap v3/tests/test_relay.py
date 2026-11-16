@@ -17,7 +17,7 @@ from opend_board import handler, PRIVATE_ORIGIN
 from providers import RoutedPriceProvider
 
 def dt(s):
-    return datetime.fromisoformat(s).astimezone(timezone.utc)
+    return datetime.fromisoformat(s.replace('Z','+00:00')).astimezone(timezone.utc)
 
 class MarketTests(unittest.TestCase):
     def test_shared_capture_serves_persisted_frame_and_joins_inflight_refresh(self):

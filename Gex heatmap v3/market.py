@@ -19,7 +19,7 @@ def symbol_code(value):
 def stamp(value):
     try:
         value = re.sub(r':(\d{3})$', r'.\1', str(value))
-        parsed = datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value.replace('Z','+00:00'))
         return parsed.replace(tzinfo=parsed.tzinfo or ET).astimezone(timezone.utc)
     except (ValueError, TypeError):
         return None

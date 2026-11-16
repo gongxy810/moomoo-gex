@@ -9,3 +9,8 @@ tests/browser-artifacts/
 tests/local-http.log
 tests/local-http-results.json
 web/opend-gex-relay.zip
+
+.env
+.env.*
+!.env.example
+*.log

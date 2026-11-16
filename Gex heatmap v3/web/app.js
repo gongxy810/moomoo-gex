@@ -1,3 +1,4 @@
+import {cloudEnabled,cloudFor} from './cloud-client.js';
 import {v3,installV3,decorateRow,structures} from './v3-ui.js';
 import {activeMetric,metricCell} from './model.js';
 import {classifyNodes,velocityBoard} from './structure.js';
@@ -66,7 +67,7 @@ const clock=new ReplayClock(cursor=>{
   const entering=state.replayCursor===null&&cursor!==null,exiting=state.replayCursor!==null&&cursor===null;
   if(entering){clearTimeout(timer);clearTimeout(priceTimer);controller=null;priceGeneration++;state.busy=false;}
   if(cursor!==null&&state.replayMax&&cursor>state.replayMax){clock.pause();cursor=state.replayMax;clock.cursor=cursor;}
-  state.replayCursor=cursor;state.index=cursor===null?null:0;render();chart.latest();if(cursor!==null)void loadReplayDay(cursor);
+  state.replayCursor=cursor;state.index=cursor===null?null:0;render();chart.latest();if(cursor!==null){void loadReplayDay(cursor);if(cloudEnabled)void loadCloudReplay(cursor);}
   if(exiting){void refresh();void refreshPrice();}
 });
 chart.onReplayPick=at=>{setReplayPicking(false);clock.seek(at);};
@@ -79,7 +80,7 @@ const strikeHover=new StrikeHoverCard({target:$('trinity'),load:spec=>spec.sourc
   requestJson('strike-history',spec.symbol,AbortSignal.timeout(30000),{metric:spec.metric??'GEX',strike:spec.strike,expiries:spec.expiries.join(','),date:spec.date,asof:spec.asof}):
   Promise.resolve({net_gex:spec.net_gex,sparkline_points:[],reason:'Demo · no recorded strike history'})});
 
-const relay = location.hostname==='127.0.0.1'&&location.protocol==='http:'?location.origin:'http://127.0.0.1:8766';
+const relay = cloudEnabled||(location.hostname==='127.0.0.1'&&location.protocol==='http:')?location.origin:'http://127.0.0.1:8766';
 const px = n => finite(n) ? n.toLocaleString('en-US', {maximumFractionDigits:4, useGrouping:false}) : '—';
 const count = n => finite(n) ? n.toLocaleString('en-US') : '—';
 const cash = n => {
@@ -126,7 +127,8 @@ function viewFor(frame, expiry = state.expiry) {
 function renderLadder(column, data, previous) {
   const symbol=column.symbol;
   const {frame, dates, strikes, shown, peak} = viewFor(data);
-  const rowRoles=classifyNodes(groups(frame,dates),frame?.spot?.value),rowVelocities=velocityBoard(frame,dates,historyFor(symbol));
+  const remote=cloudEnabled?cloudFor(frame,dates,state,requestJson,scheduleRender,activeMetric):null;
+  const rowRoles=remote?.roles??(cloudEnabled?{roles:new Map()}:classifyNodes(groups(frame,dates),frame?.spot?.value)),rowVelocities=remote?.velocity??(cloudEnabled?{entries:[]}:velocityBoard(frame,dates,historyFor(symbol)));
   const before = new Map(groups(previous, dates).map(row => [row.strike, row]));
   const old = document.querySelector(`[data-ladder="${column.id}"] .ladder-body`);
   const ladder = element('article', '', 'ladder' + (state.focusId === column.id ? ' selected' : ''));
@@ -172,7 +174,7 @@ function renderLadder(column, data, previous) {
     const line = element('div','', 'strike-row' + (isKing ? ' king' : '') + (atSpot === row.strike ? ' nearest' : ''));
     line.tabIndex = 0;
     line.dataset.strike=row.strike;
-    const metric=rowVelocity(row,before.get(row.strike),dates,previous?dates.filter(d=>previous.dates.includes(d)):[]);
+    const metric=cloudEnabled?(remote?.moves?.[state.speed]?.[row.strike]??{value:null,label:'...'}):rowVelocity(row,before.get(row.strike),dates,previous?dates.filter(d=>previous.dates.includes(d)):[]);
     const move=metric.value;
     line.__gexHover={symbol,source:state.source,strike:row.strike,expiries:[...dates],net_gex:row.value,metric:activeMetric,date:frame.sessionDate,
       asof:new Date(state.replayCursor??Date.parse(frame.captureAt??frame.collectedAt)).toISOString(),replay:state.replayCursor!==null};
@@ -181,7 +183,7 @@ function renderLadder(column, data, previous) {
     exposure.append(element('span',metric.label+(metric.flipped?' ↔':''),'velocity '+tone(move))); 
     exposure.append(element('span', cash(row.value) + (isKing ? ' ★' : ''),'gex-amount'));
     line.append(element('span', px(row.strike), 'strike-price'), exposure);
-    decorateRow(line,row,{symbol,frame,dates,history:historyFor(symbol),bars:latestPrice(frame,symbol)?.bars??[],sourceMinutes:latestPrice(frame,symbol)?.barMinutes??1,cutoff:state.replayCursor??Date.parse(frame.collectedAt),threshold:state.threshold,peak,roles:rowRoles,velocities:rowVelocities});
+    decorateRow(line,row,{symbol,frame,dates,history:historyFor(symbol),bars:latestPrice(frame,symbol)?.bars??[],sourceMinutes:latestPrice(frame,symbol)?.barMinutes??1,cutoff:state.replayCursor??Date.parse(frame.collectedAt),threshold:state.threshold,peak,roles:rowRoles,velocities:rowVelocities,remote,cloud:cloudEnabled});
     contents.append(line);
   }
   body.append(contents);
@@ -272,8 +274,9 @@ function renderChart(view) {
   const related=state.symbol==='SPXW'&&state.derived?historyFor('SPY'):[];
   const nodeKey=JSON.stringify([activeMetric,state.symbol,view.dates,state.limit,state.center,state.chartSession,state.candleMinutes,state.nodes,state.derived,state.top,state.threshold,
     replay?at:'live',history.length,history.at(-1)?.collectedAt,related.length,related.at(-1)?.collectedAt]);
-  let sampled=state.nodeCache;
-  if(sampled?.key!==nodeKey){
+  const remoteAnalysis=cloudEnabled?cloudFor(frame,view.dates,state,requestJson,scheduleRender,activeMetric):null;
+  let sampled=cloudEnabled?{key:nodeKey,nodes:remoteAnalysis?.nodes??[],trailCount:remoteAnalysis?.trailCount??0,candidates:remoteAnalysis?.candidates??0,loadedSize:0}:state.nodeCache;
+  if(!cloudEnabled&&sampled?.key!==nodeKey){
     const validHistory=history.filter(f=>(!f.optionLastAt||Date.parse(f.optionLastAt)<=at)&&
       groups(f,view.dates).some(row=>finite(row.value)&&row.value!==0)&&
       (state.chartSession==='ALL'||(state.chartSession==='EXT'?['PRE','POST'].includes(f.spot?.phase):f.spot?.phase===state.chartSession)));
@@ -312,7 +315,7 @@ function renderChart(view) {
   }
   const {nodes,trailCount,candidates,loadedSize}=sampled;
   $('derived').textContent=`Derived ${loadedSize}/${selectedSymbols().filter(s=>s==='SPY'&&state.symbol==='SPXW').length}`;
-  const structure=structures(view,history,at);
+  const structure=structures(view,history,at,remoteAnalysis,cloudEnabled);
   const levels=[...v3.lines.values()].filter(l=>l.symbol===state.symbol),annotations=[];
   if(v3.gk){if(structure.roles.gatekeeper)levels.push({price:structure.roles.gatekeeper.strike,color:'#f5b754',label:'Gatekeeper',style:2});if(finite(structure.roles.flip))levels.push({price:structure.roles.flip,color:'#c4bbff',label:activeMetric+' Profile Flip',style:2});}
   const zero=zeroGammaFor(frame,view.dates);state.zeroGamma=zero;
@@ -365,6 +368,7 @@ function renderChart(view) {
   for(const option of $('candle-period').options??[])option.disabled=!state.supportedPeriods.includes(Number(option.value));
   $('candle-period')._darkSelect?.sync();
   const messages=[];
+  if(cloudEnabled&&!remoteAnalysis?.available)messages.push(remoteAnalysis?.reason?'Cloud analysis unavailable: '+remoteAnalysis.reason:'Cloud calculation updating; prices and heatmap are independent');
   if(!zero.available)messages.push(`Zero Gamma ${zero.loading?'计算中':'不可用：'+zero.reason}`);
   if(state.historyPending[state.symbol])messages.push('历史节点加载中；价格与热图独立可用');
   if(replay&&state.replayPending.has(`${state.symbol}|${marketDate(at)}`))messages.push('Replay 历史数据加载中');
@@ -774,7 +778,9 @@ function mergePrice(symbol,price,live=true){
 const hydrating=new Map();
 async function hydrate(symbol){
   if(hydrating.has(symbol))return hydrating.get(symbol);
-  const pending=hydrateWindow(symbol,Date.now());hydrating.set(symbol,pending);
+  const price=state.prices[symbol]?.bars?.length?state.prices[symbol]:(symbol==='SPXW'?state.prices.SPY:null),last=price?.bars?.at(-1);
+  const end=last?Date.parse(last.at)+(price.barMinutes??1)*60000:Date.now();
+  const pending=hydrateWindow(symbol,cloudEnabled?Math.min(Date.now(),end):Date.now());hydrating.set(symbol,pending);
   try{return await pending;}finally{hydrating.delete(symbol);}
 }
 async function hydrateWindow(symbol,at){
@@ -859,6 +865,25 @@ function renderReplayControls(){
   if($('replay-period')._darkSelect?.button)$('replay-period')._darkSelect.button.textContent=replayStepMinutes()+'m ⌄';
   $('replay-interval-auto').setAttribute('aria-checked',String(state.replayAutoInterval));
 }
+const cloudReplayPending=new Set();
+async function loadCloudReplay(at){
+  const generation=state.sourceGeneration,day=marketDate(at);
+  await Promise.all(priceSymbols().map(async symbol=>{
+    if(cloudReplayPending.has(symbol))return;cloudReplayPending.add(symbol);
+    try{const data=await requestJson('replay-frame',symbol,AbortSignal.timeout(30000),{asof:new Date(at).toISOString()});
+      if(state.replayCursor!==at||state.sourceGeneration!==generation||!data.frame)return;
+      const key=symbol+'|'+day,older=(state.replayHistories[key]??[]).map(f=>f.cells?.length?{...f,cells:[],cloudMeta:true}:f);
+      state.replayHistories[key]=[...new Map([...older,data.frame].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
+      scheduleRender();
+    }catch(error){console.info('cloud-replay-frame',error.message);}finally{cloudReplayPending.delete(symbol);}
+  }));
+  if(state.replayCursor!==null&&state.replayCursor!==at&&state.sourceGeneration===generation)setTimeout(()=>loadCloudReplay(state.replayCursor),0);
+}
+function mergeReplayFrames(old, incoming){
+  const map=new Map(old.map(f=>[f.collectedAt,f]));
+  for(const f of incoming){if(f.cloudMeta&&map.get(f.collectedAt)?.cells?.length)continue;map.set(f.collectedAt,f);}
+  return [...map.values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
+}
 async function loadReplayDay(at){
   if(state.source!=='opend')return;
   const day=marketDate(at),generation=state.sourceGeneration;
@@ -873,7 +898,7 @@ async function loadReplayDay(at){
       requestJson('history',symbol,AbortSignal.timeout(30000),{from,to,bucket:state.candleMinutes,full:'1'}),
       requestJson('price-history',symbol,AbortSignal.timeout(30000),{from,to})]);
       if(generation!==state.sourceGeneration||state.source!=='opend'||!state.replayDateOrder.includes(day))return;
-      state.replayHistories[key]=[...new Map([...(state.replayHistories[key]??[]),...(data.frames??[])].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
+      state.replayHistories[key]=mergeReplayFrames(state.replayHistories[key]??[],data.frames??[]);
       mergePrice(symbol,price,false);
       state.replayWindowBounds[key]={start:Math.min(bounds?.start??Infinity,Date.parse(from)),end:Math.max(bounds?.end??0,at)};
     }catch(error){console.info('gex-replay-history',error.message);}finally{pending.delete(key);}

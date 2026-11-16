@@ -1,0 +1,70 @@
+# V3 hybrid cloud deployment
+
+The private board is https://instance-20261115-035258.tail29d8e5.ts.net/ .
+Connect the viewing computer/phone to the same Tailscale network. The API and
+website share this origin. The server still listens only on 127.0.0.1:8766.
+
+## Responsibilities
+
+- Windows: logged-in OpenD on 127.0.0.1:11111 and a forwarding-only SSH tunnel.
+- Cloud: shared collection, SQLite history, GEX/VEX, Zero Gamma, historical
+  nodes, Velocity/Halo, touch counts and exposure center. Cloud analysis uses
+  exactly the same pure JS calculation modules as local mode, through bounded
+  Node subprocesses, with cached/coalesced results.
+- Browser: current display formatting, price-coordinate conversion, chart
+  drawing and interaction. Rendering is still local; zero browser memory usage
+  is impossible. Heavy history calculations and raw historical chains are no
+  longer required by the cloud viewer. Small current-frame calculations remain.
+- Supabase: only latest structured snapshots; raw chains/history stay in cloud
+  SQLite. Table `public.gex_latest_snapshots` uses RLS and no browser-role grants.
+
+The Windows task `GEX v3 OpenD private tunnel` starts at user logon and retries
+the tunnel automatically. It uses an ignored private key under
+`data/cloud-tunnel`, never a key in GitHub. The dedicated cloud SSH listener is
+Tailscale-address-only port 2222 and permits only forwarding to loopback 11111,
+not shells or arbitrary ports. OpenD, Windows and Tailscale must remain online.
+Existing cached cloud data survives a disconnected laptop, but cannot update.
+
+## Development and deployment
+
+Open this original local v3 folder in VS Code. Tasks:
+
+1. `GEX v3: Publish to GitHub and cloud` (default build task): copy only tracked
+   source candidates into `data/git-workspace`, commit and push to GitHub.
+2. `GEX v3: Auto-sync saved changes`: watch source files, debounce saves by
+   20 seconds, and commit/push automatically. The first push requires signing
+   into the correct GitHub account through Git Credential Manager. Credentials
+   belong in Windows Credential Manager, never in this project.
+
+GitHub Actions must live at the repository-root path
+`.github/workflows/gex-v3.yml`; its source template is
+`Gex heatmap v3/cloud/github-actions.yml`. Only v3 business code is changed;
+v2 is preserved. CI tests first and then advances the `gex-v3-tested` tag.
+The cloud checks this tested ref every two minutes, verifies again, switches
+the release symlink, restarts the service and rolls back on health failure.
+No GitHub or Google Cloud SSH secrets are needed in Actions.
+
+Cloud layout: `~/gex-cloud/releases`, `current`, `data`, `runtime`, `cloud.env`.
+Only source releases change during deployment. Database, connection credentials
+and tunnel authorization live outside releases. The pre-existing
+`~/moomoo-gex` checkout, its local edits and `.env` are preserved.
+
+`gex-board.service` has a 650MB memory-high threshold, 850MB hard limit, and
+1GB swap allowance; BLAS worker counts are limited to one. This is a free-tier
+resource guard, not a promise that all future workloads fit in 1GB. Monitor
+CPU, storage and outbound traffic; free plans have usage limits.
+
+## Historical coverage
+
+A streamed one-time import preserves 552 sampled captures, 3962 price bars and
+recorded SPX basis anchors for Nov 13, 2026. This is a subset of the original
+local archive, not a claim that every old 1-minute capture was migrated.
+Older periods remain in the original local database. Import/export scripts
+preserve original timestamps and values; no missing samples are synthesized.
+New cloud captures accumulate independently. Replay fetches its exact latest
+eligible complete capture separately from lightweight chart history, preventing
+seek-back from selecting an empty metadata-only snapshot. Future option data is
+excluded. Initial empty-history or expired-IV states stay explicitly unavailable.
+
+Supabase `DATABASE_URL` is read from the server-only `~/gex-cloud/cloud.env`
+(mode 600). Never copy this file, the original `.env`, or local data into GitHub.

@@ -1,0 +1,8 @@
+[Unit]
+Description=Deploy tested GEX v3 release
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=sylviagong2019
+ExecStart=/bin/bash /home/sylviagong2019/gex-cloud/pull-release.sh
