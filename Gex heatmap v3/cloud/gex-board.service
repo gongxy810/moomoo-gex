@@ -14,7 +14,7 @@ Environment=MKL_NUM_THREADS=1
 Environment=GEX_DATA_DIR=/home/sylviagong2019/gex-cloud/data
 Environment=GEX_NODE=/home/sylviagong2019/gex-cloud/runtime/node/bin/node
 EnvironmentFile=-/home/sylviagong2019/gex-cloud/cloud.env
-ExecStart=/home/sylviagong2019/moomoo-gex/venv/bin/python opend_board.py --origin https://instance-20261115-035258.tail29d8e5.ts.net
+ExecStart=/home/sylviagong2019/gex-cloud/python/bin/python opend_board.py --origin https://instance-20261115-035258.tail29d8e5.ts.net
 Restart=on-failure
 RestartSec=10
 MemoryAccounting=true
