@@ -1,4 +1,5 @@
 import {cloudEnabled,cloudFor,compactCloudHistory} from './cloud-client.js';
+import {symbolRows} from './symbol-list.js';
 import {v3,installV3,decorateRow,structures} from './v3-ui.js';
 import {activeMetric,metricCell} from './model.js';
 import {classifyNodes,velocityBoard} from './structure.js';
@@ -717,14 +718,21 @@ $('copy-gex-pine-snapshot').onclick=async()=>{
 $('demo').onclick=()=>source('demo');
 $('retry').onclick=()=>source('opend');
 $('refresh').onclick=()=>state.source==='demo'?render():refresh(true);
-let pickerColumn,validationController,choiceGeneration=0;
+let pickerColumn,validationController,choiceGeneration=0,pickerQuotes={},pickerGroups=[];
+function renderPicker(){symbolRows($('symbol-options'),{groups:pickerGroups,quotes:pickerQuotes,current:state.columns.find(c=>c.id===pickerColumn)?.symbol,query:$('symbol-input').value,choose});}
+$('symbol-input').addEventListener('input',renderPicker);
 function openPicker(column){
   validationController?.abort();choiceGeneration++;pickerColumn=column.id;
   $('symbol-input').value='';$('symbol-error').textContent='';
   const groups=[['指数与 ETF',['SPX','SPXW','SPY','QQQ','IWM']],['Magnificent 7',['AAPL','MSFT','NVDA','AMZN','GOOGL','META','TSLA']]];
   try{groups.push(['Recent',JSON.parse(localStorage.getItem('gex-recent')??'[]')]);}catch{}
-  $('symbol-options').replaceChildren(...groups.map(([name,items])=>{const div=element('div','','picker-group');div.append(element('h3',name));
-    for(const item of items){const b=element('button',item+(item==='SPX'?' · 现金指数 → SPXW GEX':item==='SPXW'?' · PM 结算期权':''));b.type='button';b.dataset.symbolChoice=item;b.onclick=()=>choose(item);div.append(b);}return div;}));
+  const seen=new Set();pickerGroups=groups.map(([name,items])=>[name,items.filter(s=>!seen.has(s)&&seen.add(s))]);
+  pickerQuotes={...Object.fromEntries(Object.entries(state.prices).map(([s,p])=>[s,p]))};
+  if(pickerQuotes.SPXW?.priceSymbol==='SPX'&&!pickerQuotes.SPXW.spot?.estimated)pickerQuotes.SPX=pickerQuotes.SPXW;
+  renderPicker();const generation=choiceGeneration;
+  if(state.source==='opend')void requestJson('watchlist','SPY',AbortSignal.timeout(10000)).then(data=>{
+    if(generation!==choiceGeneration||!$('symbol-dialog').open)return;pickerQuotes=data.quotes??pickerQuotes;renderPicker();
+  }).catch(()=>{});
   $('symbol-dialog').showModal();$('symbol-input').focus();
 }
 function validationFinished(){

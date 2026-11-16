@@ -97,6 +97,18 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                     symbol, _ = symbol_code(parse_qs(path.query).get('symbol', [''])[0])
                     started=monotonic()
                     print(json.dumps({'event':'request-start','path':path.path,'symbol':symbol}),flush=True)
+                    if path.path == '/api/watchlist':
+                        quotes={}
+                        with closing(feed.store.connect()) as db:
+                            for key,raw in db.execute('SELECT symbol,meta FROM price_meta'):
+                                meta=json.loads(raw)
+                                quotes[key]={k:meta.get(k) for k in ('spot','previousClose','previousCloseDate','priceSymbol')}
+                            for key,raw in db.execute('SELECT symbol,frame FROM captures WHERE (symbol,at) IN (SELECT symbol,MAX(at) FROM captures GROUP BY symbol)'):
+                                if not quotes.get(key,{}).get('spot'):
+                                    f=json.loads(raw);quotes[key]={k:f.get(k) for k in ('spot','previousClose','previousCloseDate','priceSymbol')}
+                        cash=quotes.get('SPXW',{})
+                        quotes['SPX']=cash if cash.get('priceSymbol')=='SPX' and cash.get('spot') and not cash['spot'].get('estimated') and cash['spot'].get('source','').find('option')<0 else {}
+                        return self.json_response({'quotes':quotes})
                     if path.path == '/api/replay-frame':
                         q=parse_qs(path.query);cutoff=datetime.fromisoformat(q['asof'][0].replace('Z','+00:00'))
                         if cutoff.tzinfo is None:raise ValueError('Replay cutoff needs timezone')
@@ -180,7 +192,7 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                     category='TIMEOUT' if isinstance(error,TimeoutError) or 'timeout' in message.lower() else 'INVALID_CODE' if any(x in message.lower() for x in ['未知股票','unknown stock','unknown security','invalid stock']) else 'PERMISSION' if any(x in message.lower() for x in ['权限','permission','entitlement']) else 'NO_OPTIONS' if '期权链' in message else 'UNAVAILABLE'
                     print(json.dumps({'event':'request-error','path':path.path,'symbol':symbol,'error':message,'seconds':round(monotonic()-started,3)},ensure_ascii=True),flush=True)
                     return self.json_response({'error':message,'category':category}, 504 if category=='TIMEOUT' else 400 if category=='INVALID_CODE' else 502)
-            assets = {'/', '/index.html', '/app.js', '/model.js', '/chart.js', '/replay.js', '/spx-proxy.js', '/tools.js','/expected.js','/gex-export.js','/style.css','/structure.js','/v3-ui.js','/cloud-client.js',
+            assets = {'/', '/index.html', '/app.js', '/model.js', '/chart.js', '/replay.js', '/spx-proxy.js', '/tools.js','/expected.js','/gex-export.js','/style.css','/structure.js','/v3-ui.js','/cloud-client.js','/symbol-list.js',
                       '/vendor/lightweight-charts.standalone.production.js', '/vendor/NOTICE', '/vendor/LICENSE',
                       '/opend-gex-relay.zip'}
             if path.path == '/favicon.ico':
