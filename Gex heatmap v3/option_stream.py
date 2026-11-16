@@ -4,6 +4,36 @@ from datetime import datetime, timezone
 from market import stamp, ET
 
 
+class PriceTickerStream:
+    """Small independent cache of actual underlying trades, no DataFrames."""
+    def __init__(self,sdk,ctx):
+        self.lock=Lock();self.ticks={};owner=self
+        class Handler(sdk.TickerHandlerBase):
+            def on_recv_rsp(self,rsp_pb):
+                if rsp_pb.retType!=sdk.RET_OK:return rsp_pb.retType,rsp_pb.retMsg
+                from moomoo.common.utils import merge_qot_mkt_stock_str
+                code=merge_qot_mkt_stock_str(int(rsp_pb.s2c.security.market),rsp_pb.s2c.security.code)
+                owner.receive(code,[{'time':t.time,'price':t.price} for t in rsp_pb.s2c.tickerList])
+                return sdk.RET_OK,None
+        self.handler=Handler();ctx.set_handler(self.handler)
+
+    def receive(self,code,ticks):
+        now=datetime.now(timezone.utc)
+        valid=[(at,t) for t in ticks if (at:=stamp(t.get('time'))) is not None and
+               isinstance(t.get('price'),(int,float)) and t['price']>0 and at<=now]
+        if not valid:return
+        at,tick=max(valid,key=lambda item:item[0])
+        with self.lock:
+            old=self.ticks.get(code)
+            if old is None or at>=old[0]:self.ticks[code]=(at,dict(tick))
+            while len(self.ticks)>64:self.ticks.pop(next(iter(self.ticks)))
+
+    def get(self,code):
+        with self.lock:
+            record=self.ticks.get(code)
+            return dict(record[1]) if record else None
+
+
 class OptionStream:
     def __init__(self, sdk, ctx):
         self.sdk, self.ctx = sdk, ctx

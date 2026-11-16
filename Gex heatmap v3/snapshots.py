@@ -238,7 +238,8 @@ class SnapshotStore:
 
     def save_price(self, symbol, bars, meta):
         with self.lock, closing(self.connect()) as db, db:
-            db.executemany('INSERT OR REPLACE INTO price_bars VALUES (?,?,?)',
+            db.executemany('''INSERT INTO price_bars VALUES (?,?,?)
+                ON CONFLICT(symbol,at) DO UPDATE SET bar=excluded.bar WHERE price_bars.bar!=excluded.bar''',
                            [(symbol,b['at'],json.dumps(b,allow_nan=False)) for b in bars])
             db.execute('INSERT OR REPLACE INTO price_meta VALUES (?,?)',(symbol,json.dumps(meta,allow_nan=False)))
             cutoff=(datetime.now(timezone.utc)-timedelta(days=10)).isoformat(timespec='seconds')

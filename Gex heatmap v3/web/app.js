@@ -874,7 +874,7 @@ async function refreshPrice(){
       }
     }catch{}
   }));if(generation===priceGeneration)scheduleRender();
-  }finally{if(generation===priceGeneration)priceTimer=setTimeout(refreshPrice,collecting?1000:15000);}
+  }finally{if(generation===priceGeneration)priceTimer=setTimeout(refreshPrice,cloudEnabled?2000:collecting?1000:15000);}
 }
 function renderReplayControls(){
   let price=state.priceHistory[state.symbol]??state.prices[state.symbol]??state.frames.at(-1)?.[state.symbol]?.price;

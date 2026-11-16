@@ -16,7 +16,7 @@ from exposures import vex_cell
 from supabase_sink import LatestMirror
 from spx_calibration import calibration_reference
 from providers import OpenDPriceProvider, RoutedPriceProvider
-from option_stream import OptionStream
+from option_stream import OptionStream, PriceTickerStream
 
 MODEL = 'OI-gamma-100-unadjusted-v1'
 CAPTURE_VERSION = 'gex-collection-wide-v3'
@@ -175,6 +175,7 @@ class OpenDFeed:
         self.cache, self.chains, self.price_cache, self.calendars, self.daily_cache = {}, {}, {}, {}, {}
         self.subscriptions, self.lock = set(), RLock()
         self.option_stream = None
+        self.price_ticks = None
         self.expiry_lock = Lock()
         self.requested_expiries = {}
         self.store = store or SnapshotStore(Path(os.environ.get('GEX_DATA_DIR',str(Path(__file__).parent/'data')))/'captures.sqlite3')
@@ -196,6 +197,7 @@ class OpenDFeed:
             self.ctx = moomoo.OpenQuoteContext(host='127.0.0.1', port=self.port)
             if self.price_feed is not None:
                 self.option_stream = OptionStream(moomoo, self.ctx)
+            else:self.price_ticks = PriceTickerStream(moomoo,self.ctx)
             print(json.dumps({'event':'opend-connect','seconds':round(monotonic()-started,3),'role':'price' if self.price_feed is None else 'options'}),flush=True)
 
     def records(self, method, *args, **kwargs):
@@ -223,7 +225,7 @@ class OpenDFeed:
         if self.ctx:
             try:self.ctx.close()
             except Exception:pass
-        self.ctx=None;self.option_stream=None;self.subscriptions.clear();self.connect()
+        self.ctx=None;self.option_stream=None;self.price_ticks=None;self.subscriptions.clear();self.connect()
 
     def validate(self, raw):
         """Separate SDK connection/lock. Never downloads a chain, Greeks or OHLC here."""
@@ -301,15 +303,22 @@ class OpenDFeed:
         self.daily_cache[code] = (monotonic(), rows, day)
         return rows
 
-    def subscribe(self, code, subtype):
+    def subscribe(self, code, subtype, push=False):
         key = (code, subtype)
         if key not in self.subscriptions:
-            ret, message = self.ctx.subscribe([code], [subtype], subscribe_push=False, extended_time=True)
+            ret, message = self.ctx.subscribe([code], [subtype], subscribe_push=push, extended_time=True)
             if ret != self.sdk.RET_OK:
                 raise RuntimeError(str(message))
             self.subscriptions.add(key)
 
     def spot(self, symbol, code, now, calendar, daily):
+        try:
+            self.subscribe(code,self.sdk.SubType.TICKER,push=True)
+            tick=self.price_ticks.get(code) if self.price_ticks else None
+            if tick and 0<=(now-stamp(tick['time'])).total_seconds()<=5:
+                result=quote(symbol,{},[tick],now,calendar,daily)
+                result['source']='OpenD ticker push';return result
+        except RuntimeError:pass
         rows = self.snapshots([code])
         ticks = []
         try:
@@ -321,7 +330,22 @@ class OpenDFeed:
 
     def price(self, raw):
         symbol, _ = symbol_code(raw)
-        return self.price_provider.get(symbol)
+        return self.push_price(self.price_provider.get(symbol),symbol)
+
+    def push_price(self,price,symbol):
+        feed=self.price_feed or self
+        ticks=getattr(feed,'price_ticks',None)
+        _,code=symbol_code(symbol);now=datetime.now(timezone.utc)
+        tick=ticks.get(code) if ticks else None
+        calendar=feed.calendars.get((code.split('.')[0],str(now.astimezone(ET).date())))
+        daily=feed.daily_cache.get(code)
+        if tick and calendar and 0<=(now-stamp(tick['time'])).total_seconds()<=15:
+            spot=quote(symbol,{},[tick],now,calendar,daily[1] if daily else [])
+            if spot['current'] and (not price.get('spot') or stamp(spot['at'])>=stamp(price['spot']['at'])):
+                spot['source']='OpenD ticker push';spot['label']='OpenD ticker push · '+spot['status']
+                return {**price,'spot':spot,'quoteAt':spot['at'],'delayed':False,
+                        'previousClose':spot['previousClose'],'previousCloseDate':spot['previousCloseDate']}
+        return price
 
     def _opend_price(self, raw):
         symbol, code = symbol_code(raw)
@@ -584,6 +608,7 @@ class SnapshotManager:
                     self.price_status[symbol]={**state,'phase':'collecting','startedAt':iso(datetime.now(timezone.utc))}
                     self.price_jobs[symbol]=self.price_pool.submit(self._collect_price,symbol)
             price=self.price_latest.get(symbol)
+            if price and hasattr(self.feed,'push_price'):price=self.feed.push_price(price,symbol)
             status={k:v for k,v in self.price_status.get(symbol,{}).items() if k!='finishedMono'}
             status['stale']=(not price or not price.get('spot') or
                 (datetime.now(timezone.utc)-datetime.fromisoformat(price['spot']['at'])).total_seconds()>120)
