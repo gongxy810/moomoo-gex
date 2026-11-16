@@ -357,6 +357,20 @@ class OpenDFeed:
         cached=self.price_cache.get(symbol)
         if cached and monotonic()-cached[0]<15:
             return cached[1]
+        # Reuse subscribed trades/candles between periodic full repairs. Reading
+        # 1000 SDK candles for every root every 15s wastes the small cloud CPU.
+        if cached:
+            now=datetime.now(timezone.utc)
+            updated=self.push_price(cached[1],symbol)
+            spot=updated.get('spot') or {}
+            bars=updated.get('bars',[])
+            if (symbol!='SPXW' and spot.get('source')=='OpenD ticker push' and bars and
+                0<=(now-stamp(spot.get('at'))).total_seconds()<=15 and
+                0<=(now-stamp(bars[-1]['at'])).total_seconds()<=120 and
+                0<=(now-stamp(cached[1]['collectedAt'])).total_seconds()<120):
+                self.store.save_price(symbol,bars[-2:],{k:v for k,v in updated.items() if k!='bars'})
+                self.price_cache[symbol]=(monotonic(),updated)
+                return updated
         queued=monotonic()
         with self.lock:
             pipeline={};stage=monotonic()

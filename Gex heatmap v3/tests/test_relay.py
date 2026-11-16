@@ -20,6 +20,20 @@ def dt(s):
     return datetime.fromisoformat(s.replace('Z','+00:00')).astimezone(timezone.utc)
 
 class MarketTests(unittest.TestCase):
+    def test_fresh_subscribed_price_reuses_candles_without_sdk_download(self):
+        from datetime import timedelta
+        now=datetime.now(timezone.utc)
+        at=now.isoformat();bar={'at':at,'o':100,'h':101,'l':99,'c':100.5}
+        price={'symbol':'SPY','collectedAt':(now-timedelta(seconds=30)).isoformat(),
+               'spot':{'at':at,'source':'OpenD ticker push','value':100.5},'bars':[bar]}
+        with tempfile.TemporaryDirectory() as folder:
+            store=SnapshotStore(Path(folder)/'s.db');feed=OpenDFeed(store=store)
+            feed.price_cache['SPY']=(monotonic()-20,price)
+            feed.push_price=lambda frame,symbol:frame
+            feed.connect=lambda:self.fail('Fresh subscribed bars must not redownload SDK history')
+            self.assertEqual(feed._opend_price('SPY')['spot']['value'],100.5)
+            self.assertEqual(store.latest_price('SPY')['bars'][0]['c'],100.5)
+
     def test_cloud_metadata_history_does_not_retain_every_raw_chain(self):
         with tempfile.TemporaryDirectory() as folder:
             store=SnapshotStore(Path(folder)/'s.db')
