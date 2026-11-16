@@ -1,10 +1,30 @@
 import unittest
 from datetime import datetime, timedelta
 from market import ET
-from option_stream import OptionStream
+from option_stream import OptionStream,PriceTickerStream
 
 
 class OptionStreamTests(unittest.TestCase):
+    def test_official_price_and_kline_pushes_are_independent_of_collection(self):
+        import moomoo
+        from moomoo.common.pb import Qot_UpdateTicker_pb2,Qot_UpdateKL_pb2
+        from moomoo.common.utils import split_stock_str
+        class Context:
+            def set_handler(self,handler):pass
+        stream=PriceTickerStream(moomoo,Context())
+        _,(market,code)=split_stock_str('US.SPY')
+        at=(datetime.now(ET)-timedelta(seconds=2)).strftime('%Y-%m-%d %H:%M:%S')
+        message=Qot_UpdateTicker_pb2.Response();message.retType=0
+        message.s2c.security.market=market;message.s2c.security.code=code
+        tick=message.s2c.tickerList.add();tick.time=at;tick.price=750.25
+        stream.handler.on_recv_rsp(message)
+        self.assertEqual(stream.get('US.SPY')['price'],750.25)
+        bars=Qot_UpdateKL_pb2.Response();bars.retType=0;bars.s2c.klType=1
+        bars.s2c.security.market=market;bars.s2c.security.code=code
+        bar=bars.s2c.klList.add();bar.time=at;bar.isBlank=False
+        bar.openPrice=750;bar.highPrice=751;bar.lowPrice=749;bar.closePrice=750.25
+        stream.bar_handler.on_recv_rsp(bars)
+        self.assertEqual(stream.get_bars('US.SPY')[0]['h'],751)
     def test_pinned_sdk_push_protocol_avoids_dataframe_conversion(self):
         import moomoo
         from moomoo.common.pb import Qot_UpdateBasicQot_pb2
