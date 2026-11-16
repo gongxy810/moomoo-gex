@@ -5,10 +5,14 @@ export function compactCloudHistory(frames,limit=400){
   const closes=new Map();
   for(const f of sorted){const age=Date.parse(f.sessionClose)-Date.parse(f.collectedAt);if(f.cells?.length&&age>=0&&age<=90000)closes.set(f.sessionDate,f);}
   const saved=[...closes.values()].slice(-3),keep=new Set([...saved.map(f=>f.collectedAt),sorted.at(-1)?.collectedAt]);
-  return [...new Map([...saved,...sorted.slice(-limit)].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt)).map(f=>{
-    if(keep.has(f.collectedAt))return f;
-    const {price,bars,listedStrikes,...meta}=f;return {...meta,cells:[],cloudMeta:true};
+  const basis=[...new Map(sorted.flatMap(f=>f.basisHistory??[]).map(a=>[a.at,a])).values()].sort((a,b)=>Date.parse(a.at)-Date.parse(b.at)).slice(-3000);
+  const result=[...new Map([...saved,...sorted.slice(-limit)].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt)).map(f=>{
+    const {basisHistory,...body}=f;
+    if(keep.has(f.collectedAt))return body;
+    const {price,bars,listedStrikes,...meta}=body;return {...meta,cells:[],cloudMeta:true};
   });
+  if(basis.length&&result.length)result[0].basisHistory=basis;
+  return result;
 }
 export function cloudFor(frame,dates,state,request,render,metric){
   if(!frame?.cells?.length||!dates.length)return null;

@@ -794,8 +794,7 @@ async function hydrateWindow(symbol,at){
       if(state.source!=='opend'||generation!==state.sourceGeneration)return;
       state.histories[symbol]=[...new Map([...(data.frames??[]),...(state.histories[symbol]??[])].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
       if(cloudEnabled)state.histories[symbol]=compactCloudHistory(state.histories[symbol]);
-      if(cloudEnabled)state.histories[symbol]=compactCloudHistory(state.histories[symbol]);
-    state.historyBounds[symbol]={start:Date.parse(start),end:Date.parse(end)};
+      state.historyBounds[symbol]={start:Date.parse(start),end:Date.parse(end)};
     }catch{}})(),
     (async()=>{try{const data=await requestJson('price-history',symbol,AbortSignal.timeout(30000),{from:start,to:end});
       if(state.source!=='opend'||generation!==state.sourceGeneration)return;
@@ -814,6 +813,7 @@ async function extendHistory(symbol,from,to){
     requestJson('price-history',symbol,AbortSignal.timeout(30000),{from:start,to:end})]);
     if(generation!==state.sourceGeneration||state.source!=='opend')return;
     state.histories[symbol]=[...new Map([...(history.frames??[]),...(state.histories[symbol]??[])].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
+    if(cloudEnabled)state.histories[symbol]=compactCloudHistory(state.histories[symbol]);
     mergePrice(symbol,price,false);bound.start=Date.parse(start);scheduleRender();
   }catch(error){console.info('gex-history',error.message);}finally{delete state.historyPending[symbol];}
 }
