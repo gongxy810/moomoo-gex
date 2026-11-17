@@ -120,6 +120,13 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                             for key,raw in db.execute('SELECT symbol,frame FROM captures WHERE (symbol,at) IN (SELECT symbol,MAX(at) FROM captures GROUP BY symbol)'):
                                 if not quotes.get(key,{}).get('spot'):
                                     f=json.loads(raw);quotes[key]={k:f.get(k) for k in ('spot','previousClose','previousCloseDate','priceSymbol')}
+                        if manager:
+                            # Re-evaluate timestamps at request time. Saved quote
+                            # metadata must never stay labeled live after a close.
+                            for key in tuple(quotes):
+                                latest=manager.peek_price(key)
+                                if latest:
+                                    quotes[key]={k:latest.get(k) for k in ('spot','previousClose','previousCloseDate','priceSymbol')}
                         cash=quotes.get('SPXW',{})
                         quotes['SPX']=cash if cash.get('priceSymbol')=='SPX' and cash.get('spot') and not cash['spot'].get('estimated') and cash['spot'].get('source','').find('option')<0 else {}
                         return self.json_response({'quotes':quotes})

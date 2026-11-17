@@ -236,7 +236,7 @@ class OpenDFeed:
             if attempt == 0 and any(w in message.lower() for w in ['frequency', '频率', 'too frequent']):
                 sleep(3)
                 continue
-            if attempt==0 and any(w in message.lower() for w in ['disconnected','connection closed','broken pipe','timeout','连接断开','连接失败']):
+            if attempt==0 and any(w in message.lower() for w in ['disconnected','connection closed','broken pipe','连接断开','连接失败']):
                 self.reconnect();method=getattr(self.ctx,method.__name__);continue
             raise RuntimeError(message)
 
@@ -281,13 +281,6 @@ class OpenDFeed:
             feed = self.validation_feed
             feed.connect()
             rows, warnings = [], []
-            if symbol != 'SPXW':
-                feed.subscribe(code, feed.sdk.SubType.QUOTE)
-                rows = feed.records(feed.ctx.get_stock_quote, [code])
-                if not rows:
-                    raise ValueError('代码无法识别：'+code)
-            else:
-                warnings.append('价格 SPX / 期权 SPXW；现金指数权限独立检查')
             cached_chain = self.chains.get(symbol)
             if symbol=='SPXW' and cached_chain:
                 dates = cached_chain[2]
@@ -297,6 +290,18 @@ class OpenDFeed:
                 dates = sorted({str(r['strike_time'])[:10] for r in feed.records(feed.ctx.get_option_expiration_date,code)})
             if not dates:
                 raise RuntimeError('无期权链：'+code+' 没有可用期权到期日')
+            if symbol != 'SPXW':
+                try:
+                    feed.subscribe(code, feed.sdk.SubType.TICKER, push=True)
+                    rows = feed.records(feed.ctx.get_stock_quote, [code])
+                    if not rows:warnings.append('期权到期列表可用，但当前报价不可用')
+                except RuntimeError as error:
+                    # A stock quote timeout must not hide a valid options root.
+                    # Historical bars, static expiry metadata, and live quotes
+                    # are distinct OpenD capabilities.
+                    warnings.append('期权到期列表可用；现价暂不可用：'+str(error)[:180])
+            else:
+                warnings.append('价格 SPX / 期权 SPXW；现金指数权限独立检查')
             row = rows[0] if rows else {}
             at = stamp(row.get('data_time')) or stamp(str(row.get('data_date',''))+' '+str(row.get('data_time','')))
             result = {'symbol':symbol,'code':code,'priceSymbol':'SPX' if symbol=='SPXW' else symbol,
@@ -512,8 +517,20 @@ class OpenDFeed:
         with self.expiry_lock:
             requested = self.requested_expiries.get(symbol)
         cached = self.chains.get(symbol)
-        if cached and cached[3]==day and len(cached)>4 and cached[4]==requested and monotonic()-cached[0] < 3600:
-            return cached[1], cached[2]
+        if cached and cached[3]==day and monotonic()-cached[0] < 3600:
+            contracts, dates = dict(cached[1]), list(cached[2])
+            if requested and requested not in {spec[0] for spec in contracts.values()}:
+                errors=[]
+                for owner in ([code, 'US.SPX', 'US.SPXW'] if symbol=='SPXW' else [code]):
+                    try:
+                        extra=self.records(self.ctx.get_option_chain,owner,start=requested,end=requested)
+                        contracts.update(contracts_from_chain(symbol,extra))
+                        if requested in {spec[0] for spec in contracts.values()}:break
+                    except RuntimeError as error:errors.append(str(error))
+                if requested not in {spec[0] for spec in contracts.values()} and errors:
+                    raise RuntimeError('指定到期日期权链无法加载 · '+' | '.join(errors))
+            self.chains[symbol]=(monotonic(),contracts,dates,day,requested)
+            return contracts, dates
         errors = []
         owners = [code, 'US.SPX', 'US.SPXW'] if symbol=='SPXW' else [code]
         for owner in dict.fromkeys(owners):
@@ -527,8 +544,8 @@ class OpenDFeed:
                     # Never make that auxiliary endpoint a prerequisite for SPXW.
                     try:
                         dates = sorted(set(dates) | {str(r['strike_time'])[:10] for r in self.records(self.ctx.get_option_expiration_date, owner)})
-                    except RuntimeError:
-                        pass
+                    except RuntimeError as error:
+                        print(json.dumps({'event':'option-expiry-list-error','symbol':symbol,'owner':owner,'error':str(error)[:240]},ensure_ascii=True),flush=True)
                     if requested and requested not in {spec[0] for spec in contracts.values()}:
                         extra = self.records(self.ctx.get_option_chain, owner, start=requested, end=requested)
                         contracts.update(contracts_from_chain(symbol, extra))
@@ -690,10 +707,40 @@ class SnapshotManager:
                     self.price_jobs[symbol]=self.price_pool.submit(self._collect_price,symbol)
             price=self.price_latest.get(symbol)
             if price and hasattr(self.feed,'push_price'):price=self.feed.push_price(price,symbol)
+            if price:price=self._refresh_quote_state(price,symbol)
             status={k:v for k,v in self.price_status.get(symbol,{}).items() if k!='finishedMono'}
             status['stale']=(not price or not price.get('spot') or
                 (datetime.now(timezone.utc)-datetime.fromisoformat(price['spot']['at'])).total_seconds()>120)
             return {**price,'service':status} if price else {'symbol':symbol,'source':'OpenD','status':'loading','bars':[],'service':status}
+
+    def _refresh_quote_state(self,price,symbol):
+        spot=price.get('spot')
+        if not spot or not spot.get('at'):return price
+        try:at=datetime.fromisoformat(spot['at'].replace('Z','+00:00'))
+        except (ValueError,TypeError):return price
+        now=datetime.now(timezone.utc);age=(now-at).total_seconds()
+        feed=self.feed.price_feed or self.feed;code=symbol_code(symbol)[1]
+        calendar=feed.calendars.get((code.split('.')[0],str(now.astimezone(ET).date())))
+        phase=calendar.phase(now,symbol=='SPXW') if calendar else None
+        same_session=at.astimezone(ET).date()==now.astimezone(ET).date()
+        fresh=bool(spot.get('current') and same_session and 0<=age<=120 and phase not in (None,'Closed') and spot.get('phase')==phase)
+        if spot.get('estimated') or spot.get('status') in ('REF','Close'):
+            status=spot.get('status','REF');fresh=False
+        elif phase=='Closed':status='Closed';fresh=False
+        elif fresh:status=phase
+        else:status='Delayed' if same_session else 'REF'
+        revised={**spot,'current':fresh,'status':status,'delayed':not fresh,
+                 'label':f"{spot.get('source','OpenD')} · {status}"}
+        return {**price,'spot':revised,'delayed':not fresh}
+
+    def peek_price(self,symbol):
+        """Read the latest shared price cache without queueing another SDK request."""
+        with self.lock:price=self.price_latest.get(symbol)
+        if price is None:price=self.feed.store.latest_price(symbol)
+        if price and hasattr(self.feed,'push_price'):
+            try:price=self.feed.push_price(price,symbol)
+            except Exception:pass
+        return self._refresh_quote_state(price,symbol) if price else None
 
     def _collect_price(self,symbol):
         started=monotonic()
