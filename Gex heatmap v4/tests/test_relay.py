@@ -61,6 +61,30 @@ class MarketTests(unittest.TestCase):
             self.assertEqual(len(calls),1);self.assertTrue(calls[0]['extended_time'])
             self.assertIsNone(feed.store.latest('SPY'))
 
+    def test_ready_sdk_session_does_not_open_probe_socket(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as folder:
+            feed=OpenDFeed(store=SnapshotStore(Path(folder)/'s.db'))
+            feed.ctx=SimpleNamespace(status='READY')
+            with patch('relay.socket.create_connection') as probe:
+                feed.connect()
+                probe.assert_not_called()
+
+    def test_sdk_exception_logs_request_before_failed_reconnect(self):
+        from types import SimpleNamespace
+        def get_cur_kline(code):raise TimeoutError('timed out')
+        with tempfile.TemporaryDirectory() as folder:
+            feed=OpenDFeed(store=SnapshotStore(Path(folder)/'s.db'))
+            feed.sdk=SimpleNamespace(RET_OK=0)
+            with patch.object(feed,'reconnect',side_effect=RuntimeError('OpenD TCP connect failed')), patch('builtins.print') as log:
+                with self.assertRaisesRegex(RuntimeError,r'get_cur_kline.*US.SPY.*reconnect failed'):
+                    feed.records(get_cur_kline,'US.SPY')
+                event=json.loads(log.call_args.args[0])
+                self.assertEqual(event['method'],'get_cur_kline')
+                self.assertEqual(event['code'],'US.SPY')
+                self.assertFalse(event['ok'])
+                self.assertIn('timed out',event['error'])
+
     def test_sdk_connection_timeout_recreates_context_and_rebinds_call(self):
         from types import SimpleNamespace
         calls=[]
@@ -360,7 +384,8 @@ class ValidationTests(unittest.TestCase):
             finally:feed.lock.release();worker.join(2)
             self.assertEqual(values[0]['symbol'],'NVDA');self.assertEqual(values[0]['code'],'US.NVDA')
             self.assertEqual(values[0]['dates'],['2026-11-11'])
-            self.assertEqual([m[0] for m in methods],['subscribe','quote','dates'])
+            self.assertEqual([m[0] for m in methods],['dates','subscribe','quote'])
+            self.assertEqual(methods[1],('subscribe','US.NVDA','QUOTE'))
             self.assertTrue(feed.validate('US.NVDA')['cached'])
 
     def test_price_history_survives_restart_without_polluting_gex_history(self):

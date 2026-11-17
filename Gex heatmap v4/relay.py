@@ -190,13 +190,9 @@ class OpenDFeed:
 
     def connect(self):
         if self.ctx is not None:
-            ready = str(getattr(self.ctx, 'status', 'READY')).upper().endswith('READY')
-            try:
-                with socket.create_connection(('127.0.0.1', self.port), timeout=0.5):
-                    port_open = True
-            except OSError:
-                port_open = False
-            if ready and port_open:
+            # A live SDK session is authoritative. Opening and immediately closing
+            # a probe on every job adds connection churn and can discard a healthy session.
+            if getattr(self.ctx, 'status', None) == 'READY':
                 return
             try:self.ctx.close()
             except Exception:pass
@@ -207,7 +203,10 @@ class OpenDFeed:
             try:
                 with socket.create_connection(('127.0.0.1', self.port), timeout=2):pass
             except OSError as error:
-                raise RuntimeError(f'OpenD offline at 127.0.0.1:{self.port}; start moomoo OpenD and sign in to market data.') from error
+                message=f'OpenD TCP connect 127.0.0.1:{self.port}: {type(error).__name__}: {error}'
+                print(json.dumps({'event':'opend-connect','at':iso(datetime.now(timezone.utc)),
+                    'seconds':round(monotonic()-started,3),'ok':False,'error':message}),flush=True)
+                raise RuntimeError(message) from error
             import moomoo
             self.sdk = moomoo
             # SDK defaults to an unlimited wait for reconnection. A dropped
@@ -222,23 +221,35 @@ class OpenDFeed:
     def records(self, method, *args, **kwargs):
         for attempt in range(2):
             started = monotonic()
+            detail={'event':'sdk','at':iso(datetime.now(timezone.utc)),
+                    'method':method.__name__,'code':str(args[0])[:50] if args else None,'attempt':attempt+1}
             try:
                 result, data, *_ = method(*args, **kwargs)
             except (ConnectionError,OSError) as error:
+                message=f'{method.__name__}({detail["code"]}): {type(error).__name__}: {error}'
+                print(json.dumps({**detail,'seconds':round(monotonic()-started,3),
+                                  'ok':False,'error':message},ensure_ascii=True),flush=True)
                 if attempt==0:
-                    self.reconnect();method=getattr(self.ctx,method.__name__);continue
-                raise RuntimeError(str(error)) from error
-            print(json.dumps({'event':'sdk','method':method.__name__,'code':str(args[0])[:50] if args else None,
-                              'seconds':round(monotonic()-started,3),'ok':result==self.sdk.RET_OK},ensure_ascii=True),flush=True)
+                    try:self.reconnect()
+                    except RuntimeError as reconnect_error:
+                        raise RuntimeError(f'{message}; reconnect failed: {reconnect_error}') from error
+                    method=getattr(self.ctx,method.__name__);continue
+                raise RuntimeError(message) from error
+            print(json.dumps({**detail,'seconds':round(monotonic()-started,3),
+                              'ok':result==self.sdk.RET_OK,
+                              'error':None if result==self.sdk.RET_OK else str(data)[:300]},ensure_ascii=True),flush=True)
             if result == self.sdk.RET_OK:
                 return data.to_dict('records') if hasattr(data, 'to_dict') else data
             message = str(data)[:300]
             if attempt == 0 and any(w in message.lower() for w in ['frequency', '频率', 'too frequent']):
                 sleep(3)
                 continue
-            if attempt==0 and any(w in message.lower() for w in ['disconnected','connection closed','broken pipe','连接断开','连接失败']):
-                self.reconnect();method=getattr(self.ctx,method.__name__);continue
-            raise RuntimeError(message)
+            if attempt==0 and any(w in message.lower() for w in ['disconnected','connection closed','broken pipe','connect timeout','连接断开','连接失败']):
+                try:self.reconnect()
+                except RuntimeError as error:
+                    raise RuntimeError(f'{method.__name__}({detail["code"]}): {message}; reconnect failed: {error}') from error
+                method=getattr(self.ctx,method.__name__);continue
+            raise RuntimeError(f'{method.__name__}({detail["code"]}): {message}')
 
     def reconnect(self):
         if self.ctx:
@@ -292,7 +303,7 @@ class OpenDFeed:
                 raise RuntimeError('无期权链：'+code+' 没有可用期权到期日')
             if symbol != 'SPXW':
                 try:
-                    feed.subscribe(code, feed.sdk.SubType.TICKER, push=True)
+                    feed.subscribe(code, feed.sdk.SubType.QUOTE)
                     rows = feed.records(feed.ctx.get_stock_quote, [code])
                     if not rows:warnings.append('期权到期列表可用，但当前报价不可用')
                 except RuntimeError as error:
