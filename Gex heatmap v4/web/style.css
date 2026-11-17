@@ -268,3 +268,7 @@ dialog::backdrop {background:#000b}
 .structure-marker span{position:absolute;left:34px;top:-7px;border-radius:2px;padding:0 3px;background:#19232e;color:#b9dcf0;border:1px solid #54718a;font:8px/12px var(--mono);white-space:nowrap}
 .structure-marker:has(+.spot-marker) span{top:-14px}
 @media(max-width:540px){.symbol-list-head,.symbol-list-row{grid-template-columns:minmax(110px,1.4fr) minmax(80px,1fr) 56px 57px;gap:3px}#symbol-options .symbol-list-row{padding:9px 10px;font-size:11px}.symbol-list-head{padding:10px}.symbol-list-name{gap:5px}.symbol-list-name small{font-size:8px}.structure-marker span{left:26px;font-size:7px}}
+
+/* Use more of wide screens and give the price chart a little more room. */
+main {max-width:2200px;padding-left:clamp(10px,1.1vw,20px);padding-right:clamp(10px,1.1vw,20px)}
+@media(min-width:1201px) {.terminal {grid-template-columns:minmax(0,.96fr) minmax(0,1.04fr)}}
