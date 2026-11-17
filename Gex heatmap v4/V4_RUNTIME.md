@@ -1,5 +1,5 @@
-# V4 checkpoint and hosted runtime
+# GEX Heatmap V4
 
-V4 starts from commit `e9a63370cfecf168af5dba1b13e19c2fbc37857d`, selected from the screenshot labeled Saturday 8:01 PM. The V4 browser files preserve that version's appearance and calculations. Their history requests include `raw=1` so the current cloud API supplies the stored GEX captures needed for browser-side history, VEX, and chart bubbles.
+V4 source is restored to the V3 baseline at commit `4fb022b40acb0949241dd4b668289099cf265a90`. The browser defaults to local calculation and migrates an existing browser preference from Cloud to Local once. Cloud mode remains an explicit opt-in for later testing.
 
-The hosted runtime keeps the current backend because it owns the existing OpenD connection and cloud SQLite database. The V4 release workflow creates a deployment-only Git commit that overlays `Gex heatmap v4/web` onto the current backend's release directory. It updates the existing `gex-v3-tested` deployment tag; it does not modify the V3 source directory on GitHub main or the database.
+The local board reads and writes its local SQLite database. Cloud data imports are additive: existing local records win duplicate keys, and the cloud source database is kept intact. Do not replace the local database file during imports. V4 deployment scripts remain available for a later cloud test.

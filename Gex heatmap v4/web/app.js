@@ -17,7 +17,7 @@ const WALL_KING_LINE_STYLE=2; // Lightweight Charts LineStyle.Dashed
 const zeroGammaCache=new Map();let zeroGammaPending=false;
 const state = {symbol:'SPXW', source:'opend', expiry:'0dte', limit:40, frames:[], index:null,
   derived:true, cone:false, pinned:null, errors:{}, busy:false, center:'Spot', speed:5};
-try{state.computeMode=localStorage.getItem('gex-compute-mode')==='local'?'local':'cloud';}catch{state.computeMode='cloud';}
+try{const localDefaultSet=localStorage.getItem('gex-compute-default-local-v1')==='1';state.computeMode=localDefaultSet&&localStorage.getItem('gex-compute-mode')==='cloud'?'cloud':'local';if(!localDefaultSet){localStorage.setItem('gex-compute-mode','local');localStorage.setItem('gex-compute-default-local-v1','1');}}catch{state.computeMode='local';}
 const useCloudAnalysis=()=>cloudEnabled&&state.source==='opend'&&state.computeMode==='cloud';
 let timer, controller, priceTimer, priceGeneration=0;
 let renderQueued=false,detailView=null,detailsVisible=false;
