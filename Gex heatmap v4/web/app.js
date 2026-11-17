@@ -520,7 +520,7 @@ function details(view) {
   for(const [expiry,frame] of latestByExpiry)for(const cell of frame.cells??[])if(cell.expiry===expiry)
     map.set(expiry+'|'+cell.strike,{cell,value:metricCell(cell,frame)});
   const visible=view.strikes.flatMap(strike=>dates.map(expiry=>{
-    const value=net(map.get(expiry+'|'+strike)?.value);return {key:expiry+'|'+strike,value};
+    const record=map.get(expiry+'|'+strike),value=record?.cell.complete===false?null:net(record?.value);return {key:expiry+'|'+strike,value};
   })).filter(item=>finite(item.value));
   const positives=visible.filter(item=>item.value>0).sort((a,b)=>b.value-a.value||a.key.localeCompare(b.key));
   const negatives=visible.filter(item=>item.value<0).sort((a,b)=>a.value-b.value||a.key.localeCompare(b.key));
@@ -540,7 +540,7 @@ function details(view) {
     ...negatives.slice(0,3).map((item,i)=>rankLabel(item,i,'−')));
   table($('matrix'),['Strike',...dates.map(date=>date.slice(5)+(latestByExpiry.has(date)?' •':''))],
     view.strikes.map(strike => [{text:px(strike)},...dates.map(expiry => {
-      const key=expiry+'|'+strike,record=map.get(key),cell=record?.cell,value=record?net(record.value):null,highlight=top.get(key);
+      const key=expiry+'|'+strike,record=map.get(key),cell=record?.cell,value=record&&cell.complete!==false?net(record.value):null,highlight=top.get(key);
       return {text:cash(value),cls:highlight?`matrix-top-${highlight.sign}`:'',style:termPalette(value,positiveMax,negativeMax),
         title:record?`${expiry} / ${strike} · Net ${cash(value)}${highlight?` · ${highlight.sign==='positive'?'最正':'最负'} GEX #${highlight.rank}（当前可见矩阵）`:''} · Call ${cash(cell?.call)} · Put ${cash(cell?.put)} · 采集 ${latestByExpiry.get(expiry)?.collectedAt}`:
           `${expiry} / ${strike} · ${termColumns.get(`${view.frame.symbol}|${session}|${expiry}`)?.error??(latestByExpiry.has(expiry)?'该行权价未挂牌或缺少有效报价':'等待自动读取该到期日')}`};

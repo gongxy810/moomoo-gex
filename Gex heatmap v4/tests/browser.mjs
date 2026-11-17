@@ -162,7 +162,22 @@ try{
   if(!live)await send('Page.addScriptToEvaluateOnNewDocument',{source:design?`Date.now=()=>${designData.at};`:"Date.now=()=>Date.parse('2026-11-09T18:01:00Z');"});
   await send('Page.navigate',{url:live?liveUrl:`http://127.0.0.1:${server.address().port}`});
   await until("document.querySelectorAll('.ladder').length===3 && document.querySelectorAll('#plot canvas').length>0 && ("+(live?"true":"document.querySelector('#feed-state').textContent!=='Refreshing'")+")");
-  if(process.argv.includes('--gex-audit')){
+  if(process.argv.includes('--term-complete')){
+    await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click()");
+    const started=Date.now();let status='';
+    while(Date.now()-started<240000){
+      status=await evaluate("document.querySelector('#matrix-expiry-status').textContent");
+      const match=status.match(/(\d+)\/(\d+) loaded/);
+      if(match&&Number(match[1])===Number(match[2])&&Number(match[2])>7)break;
+      await wait(1000);
+    }
+    const match=status.match(/(\d+)\/(\d+) loaded/);
+    assert.ok(match&&Number(match[1])===Number(match[2])&&Number(match[2])>7,status);
+    assert.deepEqual(exceptions,[]);
+    const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,'term-complete.png'),Buffer.from(shot.data,'base64'));
+    console.log(JSON.stringify({passed:true,status,seconds:(Date.now()-started)/1000,exceptions}));
+  }
+  else if(process.argv.includes('--gex-audit')){
     await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click()");
     await until("Number(document.querySelector('#plot').dataset.nodeAuditCount)>0");
     const result=await evaluate("(()=>{const p=document.querySelector('#plot'),left=document.querySelector('#trinity').getBoundingClientRect(),right=document.querySelector('.chart-panel').getBoundingClientRect();return {leftWidth:left.width,chartWidth:right.width,candles:Number(p.dataset.candles),nodes:Number(p.dataset.nodeAuditCount),audit:p.__gexNodeAudit.slice(0,3)}})()");
