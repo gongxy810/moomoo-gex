@@ -35,6 +35,9 @@ def default_history_symbols():
 SNAPSHOT_INTERVAL = 1.0  # Official quota: 60 calls / 30s, <=400 codes; keep 50% call headroom.
 SNAPSHOT_LOCK = Lock()
 LAST_SNAPSHOT_AT = 0.0
+CHAIN_LOCK=Lock()
+LAST_CHAIN_AT=0.0
+CHAIN_INTERVAL=3.5  # OpenD permits ten option-chain requests per thirty seconds.
 
 
 def number(value):
@@ -219,12 +222,20 @@ class OpenDFeed:
             print(json.dumps({'event':'opend-connect','seconds':round(monotonic()-started,3),'role':'price' if self.price_feed is None else 'options'}),flush=True)
 
     def records(self, method, *args, **kwargs):
+        global LAST_CHAIN_AT
         for attempt in range(2):
             started = monotonic()
             detail={'event':'sdk','at':iso(datetime.now(timezone.utc)),
                     'method':method.__name__,'code':str(args[0])[:50] if args else None,'attempt':attempt+1}
             try:
-                result, data, *_ = method(*args, **kwargs)
+                if method.__name__=='get_option_chain':
+                    with CHAIN_LOCK:
+                        wait=CHAIN_INTERVAL-(monotonic()-LAST_CHAIN_AT)
+                        if wait>0:sleep(wait)
+                        LAST_CHAIN_AT=monotonic()
+                        result, data, *_ = method(*args, **kwargs)
+                else:
+                    result, data, *_ = method(*args, **kwargs)
             except (ConnectionError,OSError) as error:
                 message=f'{method.__name__}({detail["code"]}): {type(error).__name__}: {error}'
                 print(json.dumps({**detail,'seconds':round(monotonic()-started,3),
@@ -701,7 +712,7 @@ class SnapshotManager:
         key=(symbol,expiry)
         with self.lock:
             cached=self.term_cache.get(key)
-            if cached and monotonic()-cached[0]<300:return cached[1]
+            if cached and monotonic()-cached[0]<(30 if cached[1].get('status')=='error' else 300):return cached[1]
             job=self.term_jobs.get(key)
             if job and job.done():
                 try:result=job.result()
