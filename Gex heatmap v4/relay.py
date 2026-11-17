@@ -722,6 +722,10 @@ class SnapshotManager:
         feed=self.feed.price_feed or self.feed;code=symbol_code(symbol)[1]
         calendar=feed.calendars.get((code.split('.')[0],str(now.astimezone(ET).date())))
         phase=calendar.phase(now,symbol=='SPXW') if calendar else None
+        local=now.astimezone(ET)
+        if phase is None and ((symbol=='SPXW' and local.time()>=datetime.strptime('16:00','%H:%M').time()) or
+                              (symbol!='SPXW' and (local.time()>=datetime.strptime('20:00','%H:%M').time() or local.time()<datetime.strptime('04:00','%H:%M').time()))):
+            phase='Closed'
         same_session=at.astimezone(ET).date()==now.astimezone(ET).date()
         fresh=bool(spot.get('current') and same_session and 0<=age<=120 and phase not in (None,'Closed') and spot.get('phase')==phase)
         if spot.get('estimated') or spot.get('status') in ('REF','Close'):

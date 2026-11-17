@@ -157,7 +157,7 @@ function renderLadder(column, data, previous) {
   top.addEventListener('click',event=>{if(event.target===top){state.focusId=column.id;select(symbol);}});
   const price = frame?.spot;
   const daily = dayChange(frame), change=daily?.percent;
-  const quote = element('span', (spotLabel(symbol,price)==='REF' ? 'REF ' : price?.status==='Delayed'?'DLY ':'') + (finite(price?.value)?'$'+Number(price.value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4}):'—'),'header-spot');
+  const quote = element('span', (spotLabel(symbol,price)==='REF' ? 'REF ' : price?.status==='Delayed'?'DLY ':price?.status==='Closed'?'CLOSED ':'') + (finite(price?.value)?'$'+Number(price.value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4}):'—'),'header-spot');
   quote.dataset.value=price?.value??'';
   if (price) quote.title = `${price.source??price.label} · ${price.at} · 前收 ${frame?.previousCloseDate??'未核验'}`;
   const badge=element('span',finite(change)?`${daily.estimated&&symbol!=='SPXW'?'估算 ':''}${change>=0?'+':''}${change.toFixed(2)}%`:'—','day-change '+tone(change));

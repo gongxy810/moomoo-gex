@@ -19,6 +19,7 @@ export function closedCandles(bars,minutes,sourceMinutes,cursor,session='ALL'){
 
 export function spotLabel(symbol,spot){
   if(!spot||!finite(spot.value))return '—';
+  if(spot.status==='Closed')return 'Closed';
   if(spot.estimated||spot.status==='REF'||spot.status==='Close'||
     (symbol==='SPXW'&&(!spot.current||/candle|close|forward/i.test(spot.source??spot.label??''))))return 'REF';
   return spot.current?'Spot':spot.status==='Delayed'?'Delayed':'REF';
