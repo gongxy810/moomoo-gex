@@ -261,7 +261,8 @@ dialog::backdrop {background:#000b}
 #symbol-options .symbol-list-row:hover,#symbol-options .symbol-list-row:focus-visible{background:#23232e}
 #symbol-options .symbol-list-row[aria-pressed=true]{background:#332c1780;border-color:#a88b3e;border-radius:5px}
 .symbol-list-name{display:flex;gap:10px;align-items:center;text-align:left;font-weight:650}.symbol-list-name small{display:block;font:9px/1.5 var(--mono);color:#9a96a7;font-weight:400}
-.symbol-list-icon{display:grid;place-items:center;background:#34313e;border:1px solid #58515f;color:#e9ba48;border-radius:50%;width:27px;height:27px;font-size:10px;flex-shrink:0}
+.symbol-list-icon{display:grid;place-items:center;overflow:hidden;border:1px solid #ffffff20;color:#e9ba48;border-radius:50%;width:29px;height:29px;flex-shrink:0}
+.symbol-list-icon svg{display:block;width:19px;height:19px;fill:currentColor}
 .symbol-list-row .pos{color:#34d399}.symbol-list-row .neg{color:#fb7185}.symbol-list-last{font-variant-numeric:tabular-nums}
 .structure-marker{position:absolute;left:var(--strike-width,45px);right:0;height:1px;border-top:1px dashed #8dc6e4;z-index:3;pointer-events:none}
 .structure-marker span{position:absolute;left:34px;top:-7px;border-radius:2px;padding:0 3px;background:#19232e;color:#b9dcf0;border:1px solid #54718a;font:8px/12px var(--mono);white-space:nowrap}
