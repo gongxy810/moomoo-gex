@@ -300,6 +300,9 @@ class OpenDFeed:
                     # Historical bars, static expiry metadata, and live quotes
                     # are distinct OpenD capabilities.
                     warnings.append('期权到期列表可用；现价暂不可用：'+str(error)[:180])
+                    if 'timeout' in str(error).lower():
+                        try:feed.reconnect()
+                        except Exception:pass
             else:
                 warnings.append('价格 SPX / 期权 SPXW；现金指数权限独立检查')
             row = rows[0] if rows else {}
@@ -527,8 +530,9 @@ class OpenDFeed:
                         contracts.update(contracts_from_chain(symbol,extra))
                         if requested in {spec[0] for spec in contracts.values()}:break
                     except RuntimeError as error:errors.append(str(error))
-                if requested not in {spec[0] for spec in contracts.values()} and errors:
-                    raise RuntimeError('指定到期日期权链无法加载 · '+' | '.join(errors))
+                if requested not in {spec[0] for spec in contracts.values()}:
+                    detail=' | '.join(errors) if errors else 'OpenD returned no contracts for the listed expiry'
+                    raise RuntimeError('指定到期日期权链无法加载 · '+detail)
             self.chains[symbol]=(monotonic(),contracts,dates,day,requested)
             return contracts, dates
         errors = []
@@ -549,6 +553,8 @@ class OpenDFeed:
                     if requested and requested not in {spec[0] for spec in contracts.values()}:
                         extra = self.records(self.ctx.get_option_chain, owner, start=requested, end=requested)
                         contracts.update(contracts_from_chain(symbol, extra))
+                        if requested not in {spec[0] for spec in contracts.values()}:
+                            raise RuntimeError('OpenD returned no contracts for requested expiry '+requested)
                     self.chains[symbol] = (monotonic(), contracts, dates, day, requested)
                     return contracts, dates
             except RuntimeError as error:

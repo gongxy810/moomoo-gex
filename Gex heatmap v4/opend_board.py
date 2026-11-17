@@ -25,7 +25,7 @@ from cloud_analysis import CloudAnalysis
 LOOPBACK = '127.0.0.1'
 WEB_PORT = 8766
 PRIVATE_ORIGIN = 'https://opend-gex-board.super-fir-5013.chatgpt.site'
-VERSION = '2026-11-10-replay-validation-v2'
+VERSION = '2026-11-16-live-expiry-refresh-v1'
 def source_revision():
     root=Path(__file__).resolve().parent
     return hashlib.sha256(b''.join((root/name).read_bytes() for name in
