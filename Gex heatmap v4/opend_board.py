@@ -249,9 +249,17 @@ def main():
     parsed = urlsplit(args.origin)
     if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.path or parsed.query or parsed.fragment:
         parser.error('--origin requires an exact HTTPS origin')
-    feed = OpenDFeed(args.opend_port)
-    manager=SnapshotManager(feed)
-    with ThreadingHTTPServer((LOOPBACK, args.web_port), partial(handler(feed, args.origin, args.web_port, manager), directory=str(args.web))) as server:
+    # Bind before starting any collector threads. A second launch must exit
+    # cleanly instead of leaving collectors alive after a port-in-use error.
+    try:
+        server=ThreadingHTTPServer((LOOPBACK, args.web_port), SimpleHTTPRequestHandler)
+    except OSError as error:
+        parser.exit(1, f'Cannot start board on {LOOPBACK}:{args.web_port}: {error}\n'
+                    'Close the existing board command window before starting the updated version.\n')
+    with server:
+        feed = OpenDFeed(args.opend_port)
+        manager=SnapshotManager(feed)
+        server.RequestHandlerClass=partial(handler(feed, args.origin, args.web_port, manager), directory=str(args.web))
         print(f'OpenD GEX Board http://{LOOPBACK}:{args.web_port} · OpenD {args.opend_port}', flush=True)
         if args.open_browser:
             webbrowser.open(f'http://{LOOPBACK}:{args.web_port}')

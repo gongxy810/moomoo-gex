@@ -384,8 +384,8 @@ class ValidationTests(unittest.TestCase):
             finally:feed.lock.release();worker.join(2)
             self.assertEqual(values[0]['symbol'],'NVDA');self.assertEqual(values[0]['code'],'US.NVDA')
             self.assertEqual(values[0]['dates'],['2026-11-11'])
-            self.assertEqual([m[0] for m in methods],['dates','subscribe','quote'])
-            self.assertEqual(methods[1],('subscribe','US.NVDA','QUOTE'))
+            self.assertEqual([m[0] for m in methods],['dates'])
+            self.assertIsNone(values[0]['quote']['value'])
             self.assertTrue(feed.validate('US.NVDA')['cached'])
 
     def test_price_history_survives_restart_without_polluting_gex_history(self):

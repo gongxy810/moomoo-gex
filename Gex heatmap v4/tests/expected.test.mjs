@@ -12,6 +12,15 @@ function fixture(symbol='SPY',time=at,expiry='2026-11-09',settle=end){
   return {symbol,optionRoot:root,sessionDate:stamp.slice(0,10),sessionClose:settle,collectedAt:stamp,dates:[expiry],spot:{value:100,current:true,at:stamp,status:'RTH'},cells:[cell],price:{sessions:{[expiry]:settle}}};
 }
 
+test('front expiry uses its verified close beyond the short price calendar',()=>{
+  const expiry='2026-11-20',settle='2026-11-20T21:00:00Z';
+  const frame=fixture('SPY',at,expiry,settle);
+  frame.price.sessions={};frame.sessionDate='2026-11-09';frame.sessionClose=end;
+  frame.expiryCloses={[expiry]:settle};
+  const result=openDExpected(frame,{at,horizon:'front'});
+  assert.equal(result.available,true);assert.equal(Date.parse(result.settleAt),Date.parse(settle));
+});
+
 test('paired vendor IV uses percent normalization and verified calendar settlement',()=>{
   const c=openDExpected(fixture(),{at});assert.equal(c.available,true);assert.equal(c.quality,'Estimated');assert.equal(c.iv,.2);
   assert.equal(c.move,impliedWidth(100,.2,3/(365*24)));assert.equal(c.curves.length,4);

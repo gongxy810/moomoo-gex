@@ -30,7 +30,7 @@ export function openDExpected(frame,{at=Date.now(),horizon='today',expiry,settle
   if(!rootMatches(frame,meta.optionRoot))return unavailable('Expected Move unavailable：价格标的与期权根不匹配',meta);
   if(!spot?.current||spot.estimated||spot.status==='REF'||!finite(spot.value)||!(spot.value>0)||!finite(ms(spot.at))||at-ms(spot.at)<0||at-ms(spot.at)>spotMaxAge)
     return unavailable(symbol==='SPXW'?'SPX unavailable：需要真实、有效的 SPX Spot，参考价不能生成现金指数边界':'Expected Move stale / unavailable：缺少新鲜有效 Spot',meta);
-  const sessions={...frame.price?.sessions,...frame.sessions};
+  const sessions={...frame.price?.sessions,...frame.sessions,...frame.expiryCloses};
   if(frame.sessionDate&&frame.sessionClose)sessions[frame.sessionDate]=frame.sessionClose;
   const today=marketDate(at),dates=[...(frame.dates??[])].sort();
   if(horizon==='today')expiry=today;

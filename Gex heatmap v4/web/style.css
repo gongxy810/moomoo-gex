@@ -271,4 +271,4 @@ dialog::backdrop {background:#000b}
 
 /* Use more of wide screens and give the price chart a little more room. */
 main {max-width:2200px;padding-left:clamp(10px,1.1vw,20px);padding-right:clamp(10px,1.1vw,20px)}
-@media(min-width:1201px) {.terminal {grid-template-columns:minmax(0,.96fr) minmax(0,1.04fr)}}
+@media(min-width:1201px) {.terminal {grid-template-columns:minmax(570px,.82fr) minmax(0,1.18fr)}}

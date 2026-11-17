@@ -302,18 +302,10 @@ class OpenDFeed:
             if not dates:
                 raise RuntimeError('无期权链：'+code+' 没有可用期权到期日')
             if symbol != 'SPXW':
-                try:
-                    feed.subscribe(code, feed.sdk.SubType.QUOTE)
-                    rows = feed.records(feed.ctx.get_stock_quote, [code])
-                    if not rows:warnings.append('期权到期列表可用，但当前报价不可用')
-                except RuntimeError as error:
-                    # A stock quote timeout must not hide a valid options root.
-                    # Historical bars, static expiry metadata, and live quotes
-                    # are distinct OpenD capabilities.
-                    warnings.append('期权到期列表可用；现价暂不可用：'+str(error)[:180])
-                    if 'timeout' in str(error).lower():
-                        try:feed.reconnect()
-                        except Exception:pass
+                # The expiry response already validates the options root. Price
+                # collection runs independently after the UI commits the symbol;
+                # an optional quote must not consume the validation deadline.
+                warnings.append('期权到期列表已验证；现价由独立价格任务加载')
             else:
                 warnings.append('价格 SPX / 期权 SPXW；现金指数权限独立检查')
             row = rows[0] if rows else {}
