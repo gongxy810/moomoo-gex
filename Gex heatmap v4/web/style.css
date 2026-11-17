@@ -19,6 +19,7 @@ strong,b {font-weight:650}
 .brand {display:flex;align-items:center;gap:8px;white-space:nowrap;font-size:17px;letter-spacing:-.4px}
 .brand-mark {display:grid;place-items:center;width:26px;height:26px;border-radius:7px;background:#302713;color:var(--gold);font-size:21px}
 .top-label,small {font:10px var(--mono);letter-spacing:.085em;color:var(--quiet)}
+.compute-mode {display:flex;align-items:center;gap:6px;color:var(--quiet);font:10px var(--mono);white-space:nowrap}.compute-mode select {padding:5px 23px 5px 8px;border-color:#4d4226;color:var(--gold);background:#19170f}
 .quiet {color:var(--quiet)}
 .spacer {flex:1}
 main {max-width:1800px;margin:auto;padding:0 15px 20px}
@@ -245,3 +246,24 @@ dialog::backdrop {background:#000b}
 #v3-structure{padding:10px 18px;color:#d7b54e;background:#111116;border:1px solid #2b2933;font:12px monospace;line-height:1.8}.node-role{font:9px monospace;color:#e9ba48;position:absolute;right:5px;bottom:0;pointer-events:none}.strike-row{position:relative}.v3-context{position:fixed;z-index:10000;background:#13141a;color:#eee;padding:12px;border:1px solid #66502c;border-radius:10px;max-width:300px;font:12px monospace}.v3-context button{display:block;width:100%;margin-top:5px}.v3-context p{line-height:1.6}button[aria-pressed=true]{border-color:#c6a242;color:#facc51;background:#292311}
 
 .node-role{display:none;background:#17171f;padding:2px 4px;z-index:4;bottom:auto;top:-12px;right:0;white-space:nowrap}.strike-row:hover .node-role,.strike-row:focus .node-role{display:block}
+
+#symbol-dialog{width:min(650px,94vw);padding:0;background:#13141a;border:1px solid #36343e;border-radius:14px;overflow:hidden}
+#symbol-dialog .dialog-head{padding:20px 22px 12px}#symbol-dialog .dialog-head h2{font-size:20px}
+#symbol-dialog #symbol-form{padding:0 20px 12px;flex-wrap:nowrap;border-bottom:1px solid #2b2a33}
+#symbol-dialog #symbol-form label{display:none}#symbol-dialog #symbol-input{border-radius:7px;padding:10px 12px;min-width:0}
+#symbol-dialog #symbol-error{padding:0 20px;margin:8px 0;font-size:11px}
+#symbol-dialog>p.quiet{padding:8px 20px 12px;margin:0;font-size:10px;line-height:1.6}
+#symbol-options{max-height:min(65vh,570px);overflow-y:auto;scrollbar-width:thin;scrollbar-color:#45414b transparent}
+.symbol-list-head,.symbol-list-row{display:grid;grid-template-columns:minmax(150px,1.6fr) minmax(95px,1fr) 75px 75px;gap:8px;align-items:center;text-align:right}
+.symbol-list-head{position:sticky;top:0;z-index:2;padding:10px 22px;background:#191a21;color:#a7a4b1;font-size:12px;border-bottom:1px solid #32303a}
+.symbol-list-head>span:first-child{text-align:left}.symbol-list-group{padding:15px 22px 6px;color:#928d9f;font-size:11px}
+#symbol-options .symbol-list-row{width:100%;padding:10px 22px;border:1px solid transparent;border-bottom-color:#22232b;border-radius:0;background:transparent;color:#e5e2eb;font:13px var(--mono);min-height:48px}
+#symbol-options .symbol-list-row:hover,#symbol-options .symbol-list-row:focus-visible{background:#23232e}
+#symbol-options .symbol-list-row[aria-pressed=true]{background:#332c1780;border-color:#a88b3e;border-radius:5px}
+.symbol-list-name{display:flex;gap:10px;align-items:center;text-align:left;font-weight:650}.symbol-list-name small{display:block;font:9px/1.5 var(--mono);color:#9a96a7;font-weight:400}
+.symbol-list-icon{display:grid;place-items:center;background:#34313e;border:1px solid #58515f;color:#e9ba48;border-radius:50%;width:27px;height:27px;font-size:10px;flex-shrink:0}
+.symbol-list-row .pos{color:#34d399}.symbol-list-row .neg{color:#fb7185}.symbol-list-last{font-variant-numeric:tabular-nums}
+.structure-marker{position:absolute;left:var(--strike-width,45px);right:0;height:1px;border-top:1px dashed #8dc6e4;z-index:3;pointer-events:none}
+.structure-marker span{position:absolute;left:34px;top:-7px;border-radius:2px;padding:0 3px;background:#19232e;color:#b9dcf0;border:1px solid #54718a;font:8px/12px var(--mono);white-space:nowrap}
+.structure-marker:has(+.spot-marker) span{top:-14px}
+@media(max-width:540px){.symbol-list-head,.symbol-list-row{grid-template-columns:minmax(110px,1.4fr) minmax(80px,1fr) 56px 57px;gap:3px}#symbol-options .symbol-list-row{padding:9px 10px;font-size:11px}.symbol-list-head{padding:10px}.symbol-list-name{gap:5px}.symbol-list-name small{font-size:8px}.structure-marker span{left:26px;font-size:7px}}

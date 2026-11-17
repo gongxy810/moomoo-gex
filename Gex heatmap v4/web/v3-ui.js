@@ -16,12 +16,12 @@ export function installV3(render,jump){
   for(const [time,label] of [['09:30','09:30 Open'],['12:00','12:00 Noon'],['16:00','16:00 Close']]){const b=make('button',label);b.type='button';b.onclick=()=>jump(time);document.querySelector('#replay-form').append(b);}
   document.addEventListener('keydown',e=>{if(e.target.closest?.('input,textarea,select,[contenteditable=true]'))return;if(e.shiftKey&&['g','v'].includes(e.key.toLowerCase())){e.preventDefault();v3.metric=e.key.toLowerCase()==='v'?'VEX':'GEX';setMetric(v3.metric);render();}});
 }
-export function decorateRow(line,row,{symbol,frame,dates,history,bars,sourceMinutes,cutoff,threshold,peak,roles,velocities}){
+export function decorateRow(line,row,{symbol,frame,dates,history,bars,sourceMinutes,cutoff,threshold,peak,roles,velocities,remote,cloud}){
   if(!line.querySelector)return;
   const id=key(symbol,row.strike);if(v3.hidden.has(id))line.hidden=true;
   if(v3.dim&&peak&&Math.abs(row.value)<Math.abs(peak.value)*threshold/100)line.style.opacity='.35';
   const amount=line.querySelector('.gex-amount');if(v3.percent&&peak&&finite(row.value))amount.textContent=(row.value<0?'-':'')+(100*Math.abs(row.value/peak.value)).toFixed(1)+'% King';
-  const names=roles.roles.get(row.strike)??[],velocity=velocities.entries.find(e=>e.strike===row.strike),touch=nodeTouches(row.strike,bars,cutoff,frame.sessionDate,sourceMinutes);
+  const names=roles.roles.get(row.strike)??[],velocity=velocities.entries.find(e=>e.strike===row.strike),touch=cloud?(remote?.touches?.[row.strike]??null):nodeTouches(row.strike,bars,cutoff,frame.sessionDate,sourceMinutes);
   const info=make('span',(velocity?.halo?'◎ ':'')+(v3.tracked.has(id)?'⌖ ':'')+(touch===null?'':touch===0?'Fresh':touch>=3?'3×+ Delivered':touch+'×'));
   info.className='node-role';line.append(info);
   if(velocity?.halo){const badge=line.querySelector('.velocity');if(badge)badge.textContent='HALO '+badge.textContent;}
@@ -33,14 +33,14 @@ export function decorateRow(line,row,{symbol,frame,dates,history,bars,sourceMinu
     const close=ev=>{if(ev.type==='keydown'&&ev.key!=='Escape')return;if(!menu.contains(ev.target)){menu.remove();document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',close);}};document.addEventListener('pointerdown',close);document.addEventListener('keydown',close);
   };
 }
-export function structures(view,history,cutoff){
-  const rows=groups(view.frame,view.dates),roles=classifyNodes(rows,view.frame?.spot?.value),velocity=velocityBoard(view.frame,view.dates,history);
+export function structures(view,history,cutoff,remote=null,cloud=false){
+  const rows=groups(view.frame,view.dates),roles=remote?.roles??(cloud?{roles:new Map()}:classifyNodes(rows,view.frame?.spot?.value)),velocity=remote?.velocity??(cloud?{entries:[],up:[],down:[]}:velocityBoard(view.frame,view.dates,history));
   const board=document.querySelector('#v3-structure');
   if(board){const names=[['King',roles.peak],['Gatekeeper',roles.gatekeeper],['Ceiling',roles.ceiling],['Floor',roles.floor]].map(([n,r])=>n+' '+(r?.strike??'—')).join(' · ');
     const legend=(document.querySelectorAll?.('.chart-key > span')??[]);if(legend[0])legend[0].innerHTML='<i class=yellow></i> +'+activeMetric;if(legend[1])legend[1].innerHTML='<i class=purple></i> -'+activeMetric;
-    const toggle=document.querySelector('#v3-metric');if(toggle){toggle.textContent=activeMetric;toggle.title='VEX: local signed OI estimate per 1 absolute vol point; r=q=0 ACT/365. Missing expiry IV/time = unavailable';toggle.setAttribute('aria-pressed',activeMetric==='VEX');}
+    const toggle=document.querySelector('#v3-metric');if(toggle){toggle.textContent='GEX / VEX · '+activeMetric;toggle.title='Click to switch GEX / VEX. VEX: local signed OI estimate per 1 absolute vol point; r=q=0 ACT/365. Missing expiry IV/time = unavailable';toggle.setAttribute('aria-pressed',activeMetric==='VEX');}
     const vw=document.querySelector('#v3-gravity');if(vw)vw.textContent=activeMetric+' VWAP';
     board.textContent=activeMetric+' · '+names+' · Profile Flip '+(roles.flip?.toFixed(2)??'—')+' | Top Movers | growing: '+velocity.up.map(e=>e.strike).join(', ')+' | shrinking: '+velocity.down.map(e=>e.strike).join(', ');
     board.title='Local rules: King=max absolute exposure; Gatekeeper=nearest ≥10% King; Ceiling/Floor=strongest above/below reference; Air Pocket=≥2 contiguous <3% King rows. Halo=at least 2 of 1/5/15/30m magnitude changes ≥3% in the same direction. Changes are exposure magnitude, not proven position additions.';}
-  return {roles,velocity,gravity:v3.gravity?gravityTrail(history,view.dates,cutoff):[]};
+  return {roles,velocity,gravity:v3.gravity?(cloud?(remote?.gravity??[]):gravityTrail(history,view.dates,cutoff)):[]};
 }

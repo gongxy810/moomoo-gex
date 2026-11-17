@@ -1,5 +1,7 @@
+import {cloudEnabled,cloudFor,compactCloudHistory,prepareCloudFrame} from './cloud-client.js';
+import {symbolRows} from './symbol-list.js';
 import {v3,installV3,decorateRow,structures} from './v3-ui.js';
-import {activeMetric,metricCell} from './model.js';
+import {activeMetric,metricCell,priceTimestamp} from './model.js';
 import {classifyNodes,velocityBoard} from './structure.js';
 import { symbols, pollMs, finite, datesFor, nearest, sum, net, groups, king, velocity, nodeCandidates,
   baseline, palette, termPalette, demoFrame, rowVelocity, dayChange, walls, retainHistory, strikeView, viewSettings, aggregateBars } from './model.js';
@@ -15,6 +17,8 @@ const WALL_KING_LINE_STYLE=2; // Lightweight Charts LineStyle.Dashed
 const zeroGammaCache=new Map();let zeroGammaPending=false;
 const state = {symbol:'SPXW', source:'opend', expiry:'0dte', limit:40, frames:[], index:null,
   derived:true, cone:false, pinned:null, errors:{}, busy:false, center:'Spot', speed:5};
+try{state.computeMode=localStorage.getItem('gex-compute-mode')==='local'?'local':'cloud';}catch{state.computeMode='cloud';}
+const useCloudAnalysis=()=>cloudEnabled&&state.source==='opend'&&state.computeMode==='cloud';
 let timer, controller, priceTimer, priceGeneration=0;
 let renderQueued=false,detailView=null,detailsVisible=false;
 try{Object.assign(state,viewSettings(JSON.parse(localStorage.getItem('gex-view')??'{}')));}catch{}
@@ -23,7 +27,7 @@ saveView();
 const defaults=[{id:'left',symbol:'SPXW'},{id:'middle',symbol:'SPY'},{id:'right',symbol:'QQQ'}];
 try {const saved=JSON.parse(localStorage.getItem('gex-columns'));state.columns=Array.isArray(saved)&&saved.length===3&&saved.every((c,i)=>c.id===defaults[i].id&&typeof c.symbol==='string'&&/^[A-Z0-9._-]{1,25}$/.test(c.symbol))?saved:defaults.map(c=>({...c}));}catch{state.columns=defaults.map(c=>({...c}));}
 state.symbol=state.columns[0].symbol;
-Object.assign(state,{focusId:'left',histories:{},prices:{},candleMinutes:5,chartMode:'gex',nodes:true,top:5,threshold:10,walls:true,dayRange:false,twoSigma:false});
+Object.assign(state,{focusId:'left',histories:{},prices:{},candleMinutes:5,chartMode:'gex',nodes:true,top:5,threshold:10,walls:true,dayRange:true,twoSigma:false});
 Object.assign(state,{replayCursor:null,replayHistories:{},replayPending:new Set(),replayDateOrder:[],priceHistory:{},placeholders:{},columnStatus:{},columnVersions:{},
   chartSession:'ALL',drawingsVisible:true,nodeMin:2,nodeMax:8,nodeAlphaMin:.30,nodeAlphaMax:.85,supportedPeriods:[1,2,5,15],requests:[],sourceGeneration:0,captureStatus:{},priceStatus:{},replayRequestVersions:{},replayWindowBounds:{},historyBounds:{},historyPending:{}});
 Object.assign(state,{expectedProvider:'OpenD',expectedHorizon:'today',tempest:{},fixedRanges:[],chartAutoScale:true,candleStyle:'classic'});
@@ -34,11 +38,11 @@ const priceSymbols=()=>[...new Set([...selectedSymbols(),...(selectedSymbols().i
 const historyFor=symbol=>{
   const regular=state.histories[symbol]??state.frames.map(r=>r[symbol]).filter(Boolean);
   const dated=state.replayCursor!==null?state.replayHistories[`${symbol}|${marketDate(state.replayCursor)}`]:null;
-  return dated?[...new Map([...regular,...dated].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt)):regular;
+  return dated?mergeReplayFrames(regular,dated):regular;
 };
 const latestPrice=(frame,symbol)=>{
   const live=state.prices[symbol],snapshot=frame?.price;
-  const current=!live?snapshot:Date.parse(live.collectedAt??0)>=Date.parse(snapshot?.collectedAt??frame?.collectedAt??0)?live:snapshot??live;
+  const current=!live?snapshot:priceTimestamp(live)>=priceTimestamp(snapshot)?live:snapshot??live;
   const cached=state.priceHistory[symbol];
   return cached?.bars?.length?{...cached,...current,bars:cached.bars,sessions:{...cached.sessions,...current?.sessions}}:current;
 };
@@ -66,7 +70,15 @@ const clock=new ReplayClock(cursor=>{
   const entering=state.replayCursor===null&&cursor!==null,exiting=state.replayCursor!==null&&cursor===null;
   if(entering){clearTimeout(timer);clearTimeout(priceTimer);controller=null;priceGeneration++;state.busy=false;}
   if(cursor!==null&&state.replayMax&&cursor>state.replayMax){clock.pause();cursor=state.replayMax;clock.cursor=cursor;}
-  state.replayCursor=cursor;state.index=cursor===null?null:0;render();chart.latest();if(cursor!==null)void loadReplayDay(cursor);
+  state.replayCursor=cursor;state.index=cursor===null?null:0;render();chart.latest();
+  if(cursor!==null){
+    return Promise.all([loadReplayDay(cursor),...(useCloudAnalysis()?[loadCloudReplay(cursor)]:[])]).then(async()=>{
+      if(state.replayCursor!==cursor)return;
+      const frame=active()[state.symbol];
+      if(useCloudAnalysis())await prepareCloudFrame(frame,datesFor(frame,state.expiry),state,requestJson,scheduleRender,activeMetric);
+      if(state.replayCursor===cursor)render();
+    });
+  }
   if(exiting){void refresh();void refreshPrice();}
 });
 chart.onReplayPick=at=>{setReplayPicking(false);clock.seek(at);};
@@ -79,7 +91,7 @@ const strikeHover=new StrikeHoverCard({target:$('trinity'),load:spec=>spec.sourc
   requestJson('strike-history',spec.symbol,AbortSignal.timeout(30000),{metric:spec.metric??'GEX',strike:spec.strike,expiries:spec.expiries.join(','),date:spec.date,asof:spec.asof}):
   Promise.resolve({net_gex:spec.net_gex,sparkline_points:[],reason:'Demo · no recorded strike history'})});
 
-const relay = location.origin;
+const relay = cloudEnabled||(location.hostname==='127.0.0.1'&&location.protocol==='http:')?location.origin:'http://127.0.0.1:8766';
 const px = n => finite(n) ? n.toLocaleString('en-US', {maximumFractionDigits:4, useGrouping:false}) : '—';
 const count = n => finite(n) ? n.toLocaleString('en-US') : '—';
 const cash = n => {
@@ -124,9 +136,11 @@ function viewFor(frame, expiry = state.expiry) {
 }
 
 function renderLadder(column, data, previous) {
+  const cloud=useCloudAnalysis();
   const symbol=column.symbol;
   const {frame, dates, strikes, shown, peak} = viewFor(data);
-  const rowRoles=classifyNodes(groups(frame,dates),frame?.spot?.value),rowVelocities=velocityBoard(frame,dates,historyFor(symbol));
+  const remote=cloud?cloudFor(frame,dates,state,requestJson,scheduleRender,activeMetric,'ladder'):null;
+  const rowRoles=remote?.roles??(cloud?{roles:new Map()}:classifyNodes(groups(frame,dates),frame?.spot?.value)),rowVelocities=remote?.velocity??(cloud?{entries:[]}:velocityBoard(frame,dates,historyFor(symbol)));
   const before = new Map(groups(previous, dates).map(row => [row.strike, row]));
   const old = document.querySelector(`[data-ladder="${column.id}"] .ladder-body`);
   const ladder = element('article', '', 'ladder' + (state.focusId === column.id ? ' selected' : ''));
@@ -172,7 +186,7 @@ function renderLadder(column, data, previous) {
     const line = element('div','', 'strike-row' + (isKing ? ' king' : '') + (atSpot === row.strike ? ' nearest' : ''));
     line.tabIndex = 0;
     line.dataset.strike=row.strike;
-    const metric=rowVelocity(row,before.get(row.strike),dates,previous?dates.filter(d=>previous.dates.includes(d)):[]);
+    const metric=cloud?(remote?.moves?.[state.speed]?.[row.strike]??{value:null,label:'...'}):rowVelocity(row,before.get(row.strike),dates,previous?dates.filter(d=>previous.dates.includes(d)):[]);
     const move=metric.value;
     line.__gexHover={symbol,source:state.source,strike:row.strike,expiries:[...dates],net_gex:row.value,metric:activeMetric,date:frame.sessionDate,
       asof:new Date(state.replayCursor??Date.parse(frame.captureAt??frame.collectedAt)).toISOString(),replay:state.replayCursor!==null};
@@ -181,7 +195,7 @@ function renderLadder(column, data, previous) {
     exposure.append(element('span',metric.label+(metric.flipped?' ↔':''),'velocity '+tone(move))); 
     exposure.append(element('span', cash(row.value) + (isKing ? ' ★' : ''),'gex-amount'));
     line.append(element('span', px(row.strike), 'strike-price'), exposure);
-    decorateRow(line,row,{symbol,frame,dates,history:historyFor(symbol),bars:latestPrice(frame,symbol)?.bars??[],sourceMinutes:latestPrice(frame,symbol)?.barMinutes??1,cutoff:state.replayCursor??Date.parse(frame.collectedAt),threshold:state.threshold,peak,roles:rowRoles,velocities:rowVelocities});
+    decorateRow(line,row,{symbol,frame,dates,history:historyFor(symbol),bars:latestPrice(frame,symbol)?.bars??[],sourceMinutes:latestPrice(frame,symbol)?.barMinutes??1,cutoff:state.replayCursor??Date.parse(frame.collectedAt),threshold:state.threshold,peak,roles:rowRoles,velocities:rowVelocities,remote,cloud:cloud});
     contents.append(line);
   }
   body.append(contents);
@@ -189,10 +203,23 @@ function renderLadder(column, data, previous) {
   if(position!==null){const marker=element('div','','spot-marker');marker.style.top=position+'px';
     marker.append(element('span',`${spotLabel(symbol,price)} ${px(price.value)}`));
     marker.title=`${price.source??price.label} · ${price.at}`;contents.append(marker);}
+  const marks=new Map();
+  for(const [key,name] of [['gatekeeper','GK'],['ceiling','Ceiling'],['floor','Floor']]){
+    const value=rowRoles[key]?.strike;if(!finite(value))continue;
+    if(!marks.has(value))marks.set(value,[]);marks.get(value).push(name);
+  }
+  for(const [value,names] of marks){
+    const y=spotPosition(strikes,value,20);if(y===null)continue;
+    const marker=element('div','','structure-marker');marker.style.top=y+'px';
+    marker.dataset.roles=names.join(' / ');marker.dataset.price=value;
+    const label=element('span',names.join(' / ')+' '+px(value));
+    if(position!==null&&Math.abs(position-y)<10)label.style.top='-18px';
+    marker.append(label);contents.append(marker);
+  }
   const progress=state.replayCursor===null?state.columnStatus[column.id]:null;
   if(progress?.symbol===symbol&&progress.phase==='loading')status.append(element('span','加载期权链…','loading-column'));
   if(!shown.length){
-    const message=(state.replayCursor===null?state.errors[symbol]:null)??(frame?.historyUnavailable?'历史 GEX 不可用':!dates.length?(state.expiry==='0dte'?`${symbol} 无 0DTE`:'该到期日无数据'):
+    const message=(state.replayCursor===null?state.errors[symbol]:null)??(frame?.historyUnavailable?'历史 GEX 不可用':!dates.length?(state.expiry==='0dte'?`${symbol} 无 0DTE`:frame?.availableDates?.includes(state.expiry)&&state.replayCursor===null?'远期期权快照按需加载中…':'该到期日没有已存快照'):
       progress?.phase==='loading'?'正在加载该到期日的期权快照…':'该到期日期权快照不可用，请检查期权行情权限');
     empty(body,message);
     if(state.expiry==='0dte'&&!dates.length){const front=element('button','Front 最近到期');front.onclick=()=>{state.expiry='front';render();};body.append(front);}
@@ -239,6 +266,7 @@ function zeroGammaFor(frame,dates){
 }
 
 function renderChart(view) {
+  const cloud=useCloudAnalysis();
   const chartStarted=performance.now();
   const frame=view.frame,spot=frame?.spot,at=state.replayCursor??(state.source==='demo'?Date.parse(frame?.collectedAt):Date.now()),replay=state.replayCursor!==null;
   const daily=dayChange(frame),label=spotLabel(state.symbol,spot);
@@ -272,8 +300,9 @@ function renderChart(view) {
   const related=state.symbol==='SPXW'&&state.derived?historyFor('SPY'):[];
   const nodeKey=JSON.stringify([activeMetric,state.symbol,view.dates,state.limit,state.center,state.chartSession,state.candleMinutes,state.nodes,state.derived,state.top,state.threshold,
     replay?at:'live',history.length,history.at(-1)?.collectedAt,related.length,related.at(-1)?.collectedAt]);
-  let sampled=state.nodeCache;
-  if(sampled?.key!==nodeKey){
+  const remoteAnalysis=cloud?cloudFor(frame,view.dates,state,requestJson,scheduleRender,activeMetric):null;
+  let sampled=cloud?{key:nodeKey,nodes:remoteAnalysis?.nodes??[],trailCount:remoteAnalysis?.trailCount??0,candidates:remoteAnalysis?.candidates??0,loadedSize:0}:state.nodeCache;
+  if(!cloud&&sampled?.key!==nodeKey){
     const validHistory=history.filter(f=>(!f.optionLastAt||Date.parse(f.optionLastAt)<=at)&&
       groups(f,view.dates).some(row=>finite(row.value)&&row.value!==0)&&
       (state.chartSession==='ALL'||(state.chartSession==='EXT'?['PRE','POST'].includes(f.spot?.phase):f.spot?.phase===state.chartSession)));
@@ -312,7 +341,7 @@ function renderChart(view) {
   }
   const {nodes,trailCount,candidates,loadedSize}=sampled;
   $('derived').textContent=`Derived ${loadedSize}/${selectedSymbols().filter(s=>s==='SPY'&&state.symbol==='SPXW').length}`;
-  const structure=structures(view,history,at);
+  const structure=structures(view,history,at,remoteAnalysis,cloud);
   const levels=[...v3.lines.values()].filter(l=>l.symbol===state.symbol),annotations=[];
   if(v3.gk){if(structure.roles.gatekeeper)levels.push({price:structure.roles.gatekeeper.strike,color:'#f5b754',label:'Gatekeeper',style:2});if(finite(structure.roles.flip))levels.push({price:structure.roles.flip,color:'#c4bbff',label:activeMetric+' Profile Flip',style:2});}
   const zero=zeroGammaFor(frame,view.dates);state.zeroGamma=zero;
@@ -365,6 +394,7 @@ function renderChart(view) {
   for(const option of $('candle-period').options??[])option.disabled=!state.supportedPeriods.includes(Number(option.value));
   $('candle-period')._darkSelect?.sync();
   const messages=[];
+  if(cloud&&!remoteAnalysis?.available)messages.push(remoteAnalysis?.pending?'Cloud calculation updating; prices and heatmap are independent':remoteAnalysis?.reason?'Cloud analysis unavailable: '+remoteAnalysis.reason:'Cloud calculation updating; prices and heatmap are independent');
   if(!zero.available)messages.push(`Zero Gamma ${zero.loading?'计算中':'不可用：'+zero.reason}`);
   if(state.historyPending[state.symbol])messages.push('历史节点加载中；价格与热图独立可用');
   if(replay&&state.replayPending.has(`${state.symbol}|${marketDate(at)}`))messages.push('Replay 历史数据加载中');
@@ -482,10 +512,12 @@ function render(recenter = false) {
     return [symbol,result];
   }));
   const view=viewFor(bundle?.[state.symbol]),frame=view.frame;
+  // Reserve an analysis slot for the focused chart before the three ladders.
+  if(useCloudAnalysis())cloudFor(frame,view.dates,state,requestJson,scheduleRender,activeMetric,'chart');
   $('center').textContent=state.center;
   const expiryMenu=$('expiry');
   const fixed=[['0dte','0DTE'],['front','Front'],['week','Next 7 days']];
-  const days=[...(frame?.dates ?? [])];
+  const days=[...new Set([...(frame?.availableDates??[]),...(frame?.dates??[])])].sort();
   if (!fixed.some(([key]) => key===state.expiry) && !days.includes(state.expiry)) days.push(state.expiry);
   expiryMenu.replaceChildren(...[...fixed,...days.map(date=>[date,date])].map(([value,label])=>new Option(label,value)));
   expiryMenu.value=state.expiry;
@@ -529,7 +561,9 @@ function render(recenter = false) {
   if (frame?.source==='opend' && !spot?.current) flags.unshift(`${state.symbol} · ${spot?.label??'等待有效价格'}`);
   if (state.expiry==='0dte' && frame && !view.dates.length) flags.push('No same-day expiry in this capture. Choose Front to see the nearest listed date.');
   if (!frame && !state.busy && !flags.length) flags.push('Start the local companion to view OpenD data.');
-  $('notice').textContent=flags.join('  |  ');
+  if(state.computeMode==='local'&&state.computeHistoryLoading)flags.push('Local analysis: loading today’s stored option snapshots.');
+  if(state.computeMode==='local'&&state.errors['compute:'+state.symbol])flags.push('Local history load failed: '+state.errors['compute:'+state.symbol]);
+  $('notice').textContent=`${state.computeMode==='local'?'LOCAL COMPUTE':'CLOUD COMPUTE'}  |  `+flags.join('  |  ');
   const feed=$('feed-state');
   feed.className='pill '+(frame?.source==='opend'&&spot?.current&&!flags.length?'good':'warn');
   feed.textContent=state.source==='demo'?'Synthetic demo':state.index!==null?'Replay':
@@ -556,12 +590,13 @@ function updateBundle(bundle) {
   const previous=state.frames.at(-1);
   for(const [symbol,frame] of Object.entries(bundle))if(previous?.[symbol]&&Date.parse(frame.collectedAt)<Date.parse(previous[symbol].collectedAt))bundle[symbol]=previous[symbol];
   if (!Object.keys(bundle).some(symbol=>bundle[symbol].collectedAt!==previous?.[symbol]?.collectedAt)) return;
-  state.frames.push(bundle);
+  if(cloudEnabled&&state.source==='opend'&&state.computeMode==='cloud')state.frames=[bundle];else state.frames.push(bundle);
   for(const [symbol,frame] of Object.entries(bundle)){
     const h=state.histories[symbol]??=[];
     if(!h.some(old=>old.collectedAt===frame.collectedAt))h.push(frame);
     h.sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
-    if(h.length>2000)state.histories[symbol]=retainHistory(h);
+    if(cloudEnabled&&state.source==='opend'&&state.computeMode==='cloud')state.histories[symbol]=compactCloudHistory(h);
+    else if(h.length>2000)state.histories[symbol]=retainHistory(h);
   }
   if (state.frames.length>2000) {
     state.frames.shift();
@@ -581,7 +616,11 @@ async function requestJson(path,symbol,signal,day){
 }
 async function fetchSymbol(symbol,force=false){
   if(inflight.has(symbol))return inflight.get(symbol);
-  const pending=requestJson(force?'refresh':'snapshot',symbol,AbortSignal.timeout(15000)).then(data=>{
+  const requested=/^\d{4}-\d{2}-\d{2}$/.test(state.expiry)&&state.replayCursor===null?{expiry:state.expiry}:{};
+  const previous=state.frames.at(-1)?.[symbol];
+  if(previous?.collectedAt)requested.since=previous.collectedAt;
+  const pending=requestJson(force?'refresh':'snapshot',symbol,AbortSignal.timeout(15000),requested).then(data=>{
+    if(data.status==='unchanged'&&previous?.collectedAt===data.collectedAt)data={...previous,service:data.service};
     if(data.source!=='opend'||data.symbol!==symbol||(!Array.isArray(data.cells)&&data.status!=='loading'))throw new Error('Invalid OpenD response');return data;
   }).finally(()=>inflight.delete(symbol));inflight.set(symbol,pending);return pending;
 }
@@ -653,7 +692,7 @@ function source(name) {
 }
 
 $('symbols').addEventListener('click',event=>{if(event.target.dataset.symbol){state.focusId=event.target.dataset.column;select(event.target.dataset.symbol);}});
-$('expiry').onchange=event=>{state.expiry=event.target.value;render();};
+$('expiry').onchange=event=>{state.expiry=event.target.value;render();if(state.source==='opend'&&state.replayCursor===null)void refresh(true);};
 $('range').onchange=event=>{state.limit=viewSettings({limit:event.target.value,speed:state.speed}).limit;saveView();render(true);};
 $('speed').onchange=event=>{state.speed=viewSettings({limit:state.limit,speed:event.target.value}).speed;saveView();render();};
 $('center').onclick=()=>{state.center=state.center==='Spot'?'King':'Spot';render(true);};
@@ -710,14 +749,21 @@ $('copy-gex-pine-snapshot').onclick=async()=>{
 $('demo').onclick=()=>source('demo');
 $('retry').onclick=()=>source('opend');
 $('refresh').onclick=()=>state.source==='demo'?render():refresh(true);
-let pickerColumn,validationController,choiceGeneration=0;
+let pickerColumn,validationController,choiceGeneration=0,pickerQuotes={},pickerGroups=[];
+function renderPicker(){symbolRows($('symbol-options'),{groups:pickerGroups,quotes:pickerQuotes,current:state.columns.find(c=>c.id===pickerColumn)?.symbol,query:$('symbol-input').value,choose});}
+$('symbol-input').addEventListener('input',renderPicker);
 function openPicker(column){
   validationController?.abort();choiceGeneration++;pickerColumn=column.id;
   $('symbol-input').value='';$('symbol-error').textContent='';
   const groups=[['指数与 ETF',['SPX','SPXW','SPY','QQQ','IWM']],['Magnificent 7',['AAPL','MSFT','NVDA','AMZN','GOOGL','META','TSLA']]];
   try{groups.push(['Recent',JSON.parse(localStorage.getItem('gex-recent')??'[]')]);}catch{}
-  $('symbol-options').replaceChildren(...groups.map(([name,items])=>{const div=element('div','','picker-group');div.append(element('h3',name));
-    for(const item of items){const b=element('button',item+(item==='SPX'?' · 现金指数 → SPXW GEX':item==='SPXW'?' · PM 结算期权':''));b.type='button';b.dataset.symbolChoice=item;b.onclick=()=>choose(item);div.append(b);}return div;}));
+  const seen=new Set();pickerGroups=groups.map(([name,items])=>[name,items.filter(s=>!seen.has(s)&&seen.add(s))]);
+  pickerQuotes={...Object.fromEntries(Object.entries(state.prices).map(([s,p])=>[s,p]))};
+  if(pickerQuotes.SPXW?.priceSymbol==='SPX'&&!pickerQuotes.SPXW.spot?.estimated)pickerQuotes.SPX=pickerQuotes.SPXW;
+  renderPicker();const generation=choiceGeneration;
+  if(state.source==='opend')void requestJson('watchlist','SPY',AbortSignal.timeout(10000)).then(data=>{
+    if(generation!==choiceGeneration||!$('symbol-dialog').open)return;pickerQuotes=data.quotes??pickerQuotes;renderPicker();
+  }).catch(()=>{});
   $('symbol-dialog').showModal();$('symbol-input').focus();
 }
 function validationFinished(){
@@ -764,17 +810,32 @@ $('replay-period').onchange=event=>{state.replayInterval=Number(event.target.val
 for(const [id,key] of [['nodes','nodes'],['walls','walls'],['day-range','dayRange'],['two-sigma','twoSigma']])$(id).onchange=event=>{state[key]=event.target.checked;render();};
 $('node-top').onchange=event=>{state.top=Number(event.target.value);render();};
 $('node-threshold').onchange=event=>{state.threshold=Number(event.target.value);render();};
+const priceRepairs=new Map(),repairedPriceVersions=new Map();
 function mergePrice(symbol,price,live=true){
   const current=state.prices[symbol];
-  if(live&&(!current||Date.parse(price.collectedAt??0)>=Date.parse(current.collectedAt??0)))state.prices[symbol]=price;
+  if(live&&(!current||priceTimestamp(price)>=priceTimestamp(current)))state.prices[symbol]=price;
   const previous=state.priceHistory[symbol]??{},bars=[...new Map([...(previous.bars??[]),...(price.bars??[])].map(b=>[b.at,b])).values()].sort((a,b)=>Date.parse(a.at)-Date.parse(b.at)).slice(-20000);
   state.priceHistory[symbol]={...previous,...price,...state.prices[symbol],bars,sessions:{...previous.sessions,...price.sessions,...state.prices[symbol]?.sessions},
     dailyCloses:[...new Map([...(previous.dailyCloses??[]),...(price.dailyCloses??[])].map(d=>[d.date,d])).values()]};
+  const revision=price.minuteHistoryRevision;
+  // Live replies intentionally carry only three candles. Once OpenD repairs a
+  // disconnected session, fetch that repaired day once without clearing the chart.
+  if(live&&cloudEnabled&&state.source==='opend'&&state.replayCursor===null&&revision&&repairedPriceVersions.get(symbol)!==revision&&!priceRepairs.has(symbol)){
+    const generation=state.sourceGeneration;
+    const from=new Date(etTimestamp(marketDate(Date.now()),'04:00')).toISOString(),to=new Date().toISOString();
+    const task=requestJson('price-history',symbol,AbortSignal.timeout(30000),{from,to}).then(data=>{
+      if(generation!==state.sourceGeneration||state.source!=='opend'||state.replayCursor!==null)return;
+      mergePrice(symbol,data,false);repairedPriceVersions.set(symbol,revision);scheduleRender();
+    }).catch(()=>{}).finally(()=>priceRepairs.delete(symbol));
+    priceRepairs.set(symbol,task);
+  }
 }
 const hydrating=new Map();
 async function hydrate(symbol){
   if(hydrating.has(symbol))return hydrating.get(symbol);
-  const pending=hydrateWindow(symbol,Date.now());hydrating.set(symbol,pending);
+  const price=state.prices[symbol]?.bars?.length?state.prices[symbol]:(symbol==='SPXW'?state.prices.SPY:null),last=price?.bars?.at(-1);
+  const end=last?Date.parse(last.at)+(price.barMinutes??1)*60000:Date.now();
+  const pending=hydrateWindow(symbol,cloudEnabled?Math.min(Date.now(),end):Date.now());hydrating.set(symbol,pending);
   try{return await pending;}finally{hydrating.delete(symbol);}
 }
 async function hydrateWindow(symbol,at){
@@ -783,9 +844,10 @@ async function hydrateWindow(symbol,at){
   state.historyPending[symbol]=true;
   try{await Promise.all([
     refreshExpectedProvider(symbol),
-    (async()=>{try{const data=await requestJson('history',symbol,AbortSignal.timeout(60000),{from:start,to:end,bucket:state.candleMinutes,raw:'1'});
+    (async()=>{try{const local=cloudEnabled&&state.computeMode==='local';const data=await requestJson('history',symbol,AbortSignal.timeout(local?90000:30000),{from:start,to:end,bucket:state.candleMinutes,...(local?{raw:'1',full:'1'}:{})});
       if(state.source!=='opend'||generation!==state.sourceGeneration)return;
       state.histories[symbol]=[...new Map([...(data.frames??[]),...(state.histories[symbol]??[])].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
+      if(cloudEnabled&&state.computeMode==='cloud')state.histories[symbol]=compactCloudHistory(state.histories[symbol]);
       state.historyBounds[symbol]={start:Date.parse(start),end:Date.parse(end)};
     }catch{}})(),
     (async()=>{try{const data=await requestJson('price-history',symbol,AbortSignal.timeout(30000),{from:start,to:end});
@@ -801,10 +863,11 @@ async function extendHistory(symbol,from,to){
   if(Date.parse(start)>=Date.parse(end))return;
   state.historyPending[symbol]=true;const generation=state.sourceGeneration;
   try{const [history,price]=await Promise.all([
-    requestJson('history',symbol,AbortSignal.timeout(60000),{from:start,to:end,bucket:state.candleMinutes,full:state.replayCursor!==null?'1':'0',raw:'1'}),
+    requestJson('history',symbol,AbortSignal.timeout(cloudEnabled&&state.computeMode==='local'?90000:30000),{from:start,to:end,bucket:state.candleMinutes,full:state.replayCursor!==null||state.computeMode==='local'?'1':'0',...(cloudEnabled&&state.computeMode==='local'?{raw:'1'}:{})}),
     requestJson('price-history',symbol,AbortSignal.timeout(30000),{from:start,to:end})]);
     if(generation!==state.sourceGeneration||state.source!=='opend')return;
     state.histories[symbol]=[...new Map([...(history.frames??[]),...(state.histories[symbol]??[])].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
+    if(cloudEnabled&&state.computeMode==='cloud')state.histories[symbol]=compactCloudHistory(state.histories[symbol]);
     mergePrice(symbol,price,false);bound.start=Date.parse(start);scheduleRender();
   }catch(error){console.info('gex-history',error.message);}finally{delete state.historyPending[symbol];}
 }
@@ -828,7 +891,7 @@ async function refreshPrice(){
       }
     }catch{}
   }));if(generation===priceGeneration)scheduleRender();
-  }finally{if(generation===priceGeneration)priceTimer=setTimeout(refreshPrice,collecting?1000:15000);}
+  }finally{if(generation===priceGeneration)priceTimer=setTimeout(refreshPrice,cloudEnabled?2000:collecting?1000:15000);}
 }
 function renderReplayControls(){
   let price=state.priceHistory[state.symbol]??state.prices[state.symbol]??state.frames.at(-1)?.[state.symbol]?.price;
@@ -859,6 +922,25 @@ function renderReplayControls(){
   if($('replay-period')._darkSelect?.button)$('replay-period')._darkSelect.button.textContent=replayStepMinutes()+'m ⌄';
   $('replay-interval-auto').setAttribute('aria-checked',String(state.replayAutoInterval));
 }
+const cloudReplayPending=new Set();
+async function loadCloudReplay(at){
+  const generation=state.sourceGeneration,day=marketDate(at);
+  await Promise.all(priceSymbols().map(async symbol=>{
+    if(cloudReplayPending.has(symbol))return;cloudReplayPending.add(symbol);
+    try{const data=await requestJson('replay-frame',symbol,AbortSignal.timeout(30000),{asof:new Date(at).toISOString()});
+      if(state.replayCursor!==at||state.sourceGeneration!==generation||!data.frame)return;
+      const key=symbol+'|'+day,older=(state.replayHistories[key]??[]).map(f=>f.cells?.length?{...f,cells:[],cloudMeta:true}:f);
+      state.replayHistories[key]=[...new Map([...older,data.frame].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
+      scheduleRender();
+    }catch(error){console.info('cloud-replay-frame',error.message);}finally{cloudReplayPending.delete(symbol);}
+  }));
+  if(state.replayCursor!==null&&state.replayCursor!==at&&state.sourceGeneration===generation)setTimeout(()=>loadCloudReplay(state.replayCursor),0);
+}
+function mergeReplayFrames(old, incoming){
+  const map=new Map(old.map(f=>[f.collectedAt,f]));
+  for(const f of incoming){if(f.cloudMeta&&map.get(f.collectedAt)?.cells?.length)continue;map.set(f.collectedAt,f);}
+  return [...map.values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
+}
 async function loadReplayDay(at){
   if(state.source!=='opend')return;
   const day=marketDate(at),generation=state.sourceGeneration;
@@ -869,14 +951,17 @@ async function loadReplayDay(at){
     const key=`${symbol}|${day}`,bounds=state.replayWindowBounds[key];
     if(bounds&&at>=bounds.start&&at<=bounds.end||pending.has(key))return;
     pending.add(key);scheduleRender();const from=new Date(bounds&&at>bounds.end?bounds.end-40*60000:at-10*3600000).toISOString(),to=new Date(at).toISOString();
-    try{const [data,price]=await Promise.all([
-      requestJson('history',symbol,AbortSignal.timeout(60000),{from,to,bucket:state.candleMinutes,full:'1',raw:'1'}),
-      requestJson('price-history',symbol,AbortSignal.timeout(30000),{from,to})]);
+    try{const priceTask=requestJson('price-history',symbol,AbortSignal.timeout(30000),{from,to}).then(price=>{
+      if(generation===state.sourceGeneration&&state.source==='opend'&&state.replayDateOrder.includes(day)){mergePrice(symbol,price,false);scheduleRender();}
+    }).catch(error=>console.info('gex-replay-price',error.message));
+      const data=await requestJson('history',symbol,AbortSignal.timeout(90000),{from,to,bucket:state.candleMinutes,full:'1',...(cloudEnabled&&state.computeMode==='local'?{raw:'1'}:{})});
+      await priceTask;
       if(generation!==state.sourceGeneration||state.source!=='opend'||!state.replayDateOrder.includes(day))return;
-      state.replayHistories[key]=[...new Map([...(state.replayHistories[key]??[]),...(data.frames??[])].map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
-      mergePrice(symbol,price,false);
+      state.replayHistories[key]=mergeReplayFrames(state.replayHistories[key]??[],data.frames??[]);
       state.replayWindowBounds[key]={start:Math.min(bounds?.start??Infinity,Date.parse(from)),end:Math.max(bounds?.end??0,at)};
-    }catch(error){console.info('gex-replay-history',error.message);}finally{pending.delete(key);}
+    }catch(error){console.info('gex-replay-history',error.message);
+      setTimeout(()=>{if(generation===state.sourceGeneration&&state.replayCursor!==null&&marketDate(state.replayCursor)===day)void loadReplayDay(state.replayCursor);},3000);
+    }finally{pending.delete(key);}
   }));if(generation===state.sourceGeneration&&state.replayCursor!==null){render();if(state.replayCursor!==at)setTimeout(()=>loadReplayDay(state.replayCursor),0);}
 }
 function enterReplayFromInputs(){
@@ -904,9 +989,34 @@ async function start(){
   setTimeout(()=>{for(const symbol of [state.symbol,...priceSymbols().filter(s=>s!==state.symbol)])void hydrate(symbol);},1200);
 }
 $('range').value=String(state.limit);$('speed').value=String(state.speed);
-new DarkSelect($('range'),'Strikes');new DarkSelect($('speed'),'GEX Velocity');
+new DarkSelect($('range'),'Strikes');new DarkSelect($('speed'),'GEX Velocity');new DarkSelect($('compute-mode'),'Compute');
 new DarkSelect($('expiry'),'Expiry Date');new DarkSelect($('candle-period'),'Timeframe');
 new DarkSelect($('replay-speed'),'Replay Speed');
+function loadLocalComputeHistory(symbol){
+  const generation=state.sourceGeneration,day=marketDate(Date.now()),start=new Date(etTimestamp(day,'04:00')).toISOString(),end=new Date().toISOString();
+  return requestJson('history',symbol,AbortSignal.timeout(90000),{from:start,to:end,bucket:1,raw:'1'})
+    .then(data=>{if(generation!==state.sourceGeneration||state.computeMode!=='local'||state.source!=='opend')return;
+      const merged=[...(state.histories[symbol]??[]),...(data.frames??[])];
+      state.histories[symbol]=[...new Map(merged.map(f=>[f.collectedAt,f])).values()].sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt)).slice(-1200);
+      state.historyBounds[symbol]={start:Date.parse(start),end:Date.parse(end)};
+      delete state.errors['compute:'+symbol];
+    }).catch(error=>{if(generation===state.sourceGeneration)state.errors['compute:'+symbol]=error.message;})
+    .finally(()=>{if(generation===state.sourceGeneration){state.nodeCache=null;scheduleRender();}});
+}
+const computeMode=$('compute-mode');computeMode.value=state.computeMode;
+computeMode.onchange=()=>{
+  state.computeMode=computeMode.value==='local'?'local':'cloud';
+  try{localStorage.setItem('gex-compute-mode',state.computeMode);}catch{}
+  state.nodeCache=null;state.computeHistoryLoading=false;
+  if(state.computeMode==='local'&&cloudEnabled&&state.source==='opend'){
+    const symbols=[...new Set([...selectedSymbols(),...(state.symbol==='SPXW'?['SPY']:[])])];state.computeHistoryLoading=symbols.length>0;scheduleRender();
+    void (async()=>{for(const symbol of symbols){if(state.computeMode!=='local'||state.source!=='opend')break;await loadLocalComputeHistory(symbol);}
+      state.computeHistoryLoading=false;scheduleRender();})();
+  }
+  scheduleRender();
+};
+if(state.computeMode==='local'&&cloudEnabled&&state.source==='opend')setTimeout(()=>computeMode.onchange(),0);
+if(state.computeMode==='local'&&cloudEnabled&&state.source==='opend')setTimeout(()=>computeMode.onchange(),0);
 const replayIntervalPicker=new DarkSelect($('replay-period'),'Replay update interval');
 if(replayIntervalPicker.list){
   const heading=element('div','UPDATE INTERVAL ⓘ','interval-menu-heading');

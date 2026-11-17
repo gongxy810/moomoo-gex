@@ -174,3 +174,12 @@ test('fixed range refuses intraday IV backfill; cone uses calendar half-day end'
   const range=dayRange(f,[captured]);assert.ok(range.move>0);assert.equal(range.iv,.2);
   assert.deepEqual(dayRange({...f,spot:{...f.spot,value:110}},[captured]),range);
 });
+
+
+test('subscribed quote freshness uses quote time rather than full capture receipt time',async()=>{
+  const {priceTimestamp}=await import('../web/model.js');
+  const live={collectedAt:'2026-11-16T17:00:00Z',spot:{at:'2026-11-16T17:02:10Z'}};
+  const capture={collectedAt:'2026-11-16T17:02:05Z',spot:{at:'2026-11-16T17:01:59Z'}};
+  assert.ok(priceTimestamp(live)>priceTimestamp(capture));
+  assert.equal(priceTimestamp(null),-Infinity);
+});

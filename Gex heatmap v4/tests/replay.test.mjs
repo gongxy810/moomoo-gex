@@ -1,6 +1,19 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {closedCandles,frameAt,spotPosition,spotLabel,snapshotTrail,etTimestamp,ReplayClock} from '../web/replay.js';
+test('automatic Replay waits for historical GEX before advancing its cursor',async()=>{
+  const original=globalThis.setTimeout;let tick,release;
+  globalThis.setTimeout=fn=>{tick=fn;return 123456;};
+  let count=0;
+  const clock=new ReplayClock(()=>++count===1?new Promise(resolve=>{release=resolve;}):undefined);
+  try{
+    clock.seek(1000000);clock.play();const work=tick();
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(clock.cursor,1000000);
+    release();await work;
+    assert.equal(clock.cursor,1300000);assert.equal(count,2);
+  }finally{clock.pause();globalThis.setTimeout=original;}
+});
 const base=Date.parse('2026-11-09T15:00:00Z');
 const bars=Array.from({length:15},(_,i)=>({at:new Date(base+i*60000).toISOString(),o:100+i,h:200+i,l:90+i,c:101+i,phase:'RTH'}));
 test('10:07 replay excludes the final HLC of 10:05–10:10, including source-bar end boundary',()=>{

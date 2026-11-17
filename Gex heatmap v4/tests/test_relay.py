@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from threading import Event
 from time import monotonic, sleep
 import json
@@ -10,16 +11,130 @@ from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from functools import partial
 from unittest.mock import patch
-from market import Calendar, quote, symbol_code
-from relay import contracts_from_chain, summarize, implied_reference, OpenDFeed, SnapshotManager, MODEL, cache_identity, supplemental_close
+from market import Calendar, quote, symbol_code, iso
+from relay import contracts_from_chain, summarize, implied_reference, OpenDFeed, SnapshotManager, MODEL, cache_identity, supplemental_close, default_history_symbols
 from snapshots import SnapshotStore
 from opend_board import handler, PRIVATE_ORIGIN
 from providers import RoutedPriceProvider
 
 def dt(s):
-    return datetime.fromisoformat(s).astimezone(timezone.utc)
+    return datetime.fromisoformat(s.replace('Z','+00:00')).astimezone(timezone.utc)
 
 class MarketTests(unittest.TestCase):
+    def test_short_live_buffer_cannot_remove_previously_repaired_candles(self):
+        from types import SimpleNamespace
+        from datetime import timedelta
+        now=datetime.now(timezone.utc).replace(second=0,microsecond=0)
+        day=now.astimezone(ZoneInfo('America/New_York')).date()
+        calendar=Calendar([{'time':str(day),'trade_date_type':'WHOLE'},{'time':str(day-timedelta(days=1)),'trade_date_type':'WHOLE'}])
+        old={'at':iso(now-timedelta(minutes=1)),'o':100,'h':101,'l':99,'c':100}
+        with tempfile.TemporaryDirectory() as folder:
+            feed=OpenDFeed(store=SnapshotStore(Path(folder)/'s.db'),price_only=True)
+            feed.ctx=SimpleNamespace(get_cur_kline='bars')
+            feed.sdk=SimpleNamespace(SubType=SimpleNamespace(K_1M='1m'),KLType=SimpleNamespace(K_1M='1m'),AuType=SimpleNamespace(NONE='NONE'))
+            feed.price_cache['SPY']=(monotonic()-121,{'collectedAt':iso(now-timedelta(minutes=3)),'bars':[old]})
+            feed.connect=lambda:None;feed.calendar=lambda *args:calendar;feed.daily=lambda *args:[]
+            feed.spot=lambda *args:{'value':102,'at':iso(now),'previousClose':100,'previousCloseDate':str(day-timedelta(days=1))}
+            feed.subscribe=lambda *args,**kwargs:None
+            feed.records=lambda *args,**kwargs:[{'time_key':now.astimezone(ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M:%S'),'open':101,'high':103,'low':100,'close':102}]
+            feed.repair_intraday=lambda code,rows,now:(rows,None)
+            result=feed._opend_price('SPY')
+            self.assertEqual([r['c'] for r in result['bars']],[100,102])
+
+    def test_reconnect_repairs_missing_minutes_without_inventing_gex(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as folder:
+            feed=OpenDFeed(store=SnapshotStore(Path(folder)/'s.db'),price_only=True)
+            feed.ctx=SimpleNamespace(request_history_kline='history')
+            feed.sdk=SimpleNamespace(KLType=SimpleNamespace(K_1M='1m'),AuType=SimpleNamespace(NONE='NONE'))
+            calls=[]
+            def records(*args,**kwargs):
+                calls.append(kwargs)
+                return [{'time_key':'2026-11-16 12:25:00','close':101},
+                        {'time_key':'2026-11-16 13:00:00','close':102},
+                        {'time_key':'2026-11-16 16:45:00','close':103}]
+            feed.records=records
+            live=[{'time_key':'2026-11-16 12:25:00','close':99},{'time_key':'2026-11-16 16:45:00','close':104}]
+            rows,error=feed.repair_intraday('US.SPY',live,dt('2026-11-16T21:45:30Z'))
+            self.assertIsNone(error);self.assertEqual([r['close'] for r in rows],[101,102,104])
+            feed.repair_intraday('US.SPY',rows,dt('2026-11-16T21:46:00Z'))
+            self.assertEqual(len(calls),1);self.assertTrue(calls[0]['extended_time'])
+            self.assertIsNone(feed.store.latest('SPY'))
+
+    def test_sdk_connection_timeout_recreates_context_and_rebinds_call(self):
+        from types import SimpleNamespace
+        calls=[]
+        class Context:
+            def __init__(self,fail):self.fail=fail
+            def get_stock_quote(self,codes):
+                calls.append(self.fail)
+                return (-1,'Connect timeout') if self.fail else (0,[{'code':codes[0]}])
+        with tempfile.TemporaryDirectory() as folder:
+            feed=OpenDFeed(store=SnapshotStore(Path(folder)/'s.db'))
+            feed.sdk=SimpleNamespace(RET_OK=0);feed.ctx=Context(True)
+            feed.reconnect=lambda:setattr(feed,'ctx',Context(False))
+            self.assertEqual(feed.records(feed.ctx.get_stock_quote,['US.SPY']),[{'code':'US.SPY'}])
+            self.assertEqual(calls,[True,False])
+
+    def test_fresh_subscribed_price_reuses_candles_without_sdk_download(self):
+        from types import SimpleNamespace
+        from datetime import timedelta
+        now=datetime.now(timezone.utc)
+        at=now.isoformat();bar={'at':at,'o':100,'h':101,'l':99,'c':100.5}
+        price={'symbol':'SPY','collectedAt':(now-timedelta(seconds=30)).isoformat(),
+               'spot':{'at':at,'source':'OpenD ticker push','value':100.5},'bars':[bar]}
+        with tempfile.TemporaryDirectory() as folder:
+            store=SnapshotStore(Path(folder)/'s.db');feed=OpenDFeed(store=store)
+            feed.price_cache['SPY']=(monotonic()-20,price)
+            feed.push_price=lambda frame,symbol:frame
+            feed.ctx=SimpleNamespace(get_cur_kline='bars')
+            feed.sdk=SimpleNamespace(KLType=SimpleNamespace(K_1M='1m'),AuType=SimpleNamespace(NONE='NONE'))
+            counts=[]
+            def records(method,code,num,**kwargs):counts.append(num);return []
+            feed.records=records
+            feed.connect=lambda:self.fail('Fresh subscribed bars must not redownload SDK history')
+            self.assertEqual(feed._opend_price('SPY')['spot']['value'],100.5)
+            self.assertEqual(store.latest_price('SPY')['bars'][0]['c'],100.5)
+            self.assertEqual(counts,[2])
+
+    def test_cloud_metadata_history_does_not_retain_every_raw_chain(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store=SnapshotStore(Path(folder)/'s.db')
+            for minute in range(10):
+                at=f'2026-11-13T15:{minute:02d}:00+00:00'
+                store.save({'symbol':'SPY','collectedAt':at,'sessionDate':'2026-11-13','usable':1,
+                    'sessionClose':'2026-11-13T21:00:00+00:00','cells':[{'strike':100,'expiry':'2026-11-13','call':1,'put':-2}]})
+            frames=store.window('SPY','2026-11-13T15:00:00+00:00','2026-11-13T15:10:00+00:00',metadata=True)
+            self.assertEqual(sum(bool(f['cells']) for f in frames),1)
+            self.assertEqual(frames[-1]['cells'][0]['call'],1)
+            self.assertEqual(store.latest('SPY')['cells'][0]['put'],-2)
+    def test_far_expiry_catalog_and_requested_chain_are_not_limited_to_six_dates(self):
+        from types import SimpleNamespace
+        near='2026-11-16';far='2028-01-21'
+        with tempfile.TemporaryDirectory() as folder:
+            feed=OpenDFeed(store=SnapshotStore(Path(folder)/'s.db'))
+            feed.ctx=SimpleNamespace(get_option_chain='chain',get_option_expiration_date='dates')
+            calls=[]
+            def records(method,*args,**kwargs):
+                calls.append((method,kwargs))
+                if method=='dates':return [{'strike_time':near},{'strike_time':far}]
+                expiry=far if kwargs.get('start')==far else near
+                return [{'code':'US.SPY'+expiry+'C100','option_type':'CALL','strike_time':expiry,'strike_price':100}]
+            feed.records=records
+            _,dates=feed.chain('SPY','US.SPY',near)
+            self.assertIn(far,dates)
+            feed.requested_expiries['SPY']=far
+            chain,_=feed.chain('SPY','US.SPY',near)
+            self.assertIn(far,{spec[0] for spec in chain.values()})
+            self.assertTrue(any(method=='chain' and args.get('start')==far for method,args in calls))
+    def test_cloud_history_defaults_and_index_alias_deduplication(self):
+        with patch.dict('os.environ', {'GEX_CLOUD':'1'}, clear=True):
+            self.assertEqual(set(default_history_symbols()), {'SPXW','SPY','QQQ','IWM','AAPL','MSFT','NVDA','AMZN','GOOGL','META','TSLA'})
+        with patch.dict('os.environ', {'GEX_CLOUD':'1','GEX_HISTORY_SYMBOLS':'SPX,SPXW,SPY,SPY'}, clear=True):
+            self.assertEqual(default_history_symbols(), ('SPXW','SPY'))
+        with patch.dict('os.environ', {}, clear=True):
+            self.assertEqual(default_history_symbols(), ('SPY','QQQ','SPXW'))
+
     def test_shared_capture_serves_persisted_frame_and_joins_inflight_refresh(self):
         with tempfile.TemporaryDirectory() as folder:
             store=SnapshotStore(Path(folder)/'captures.sqlite3')

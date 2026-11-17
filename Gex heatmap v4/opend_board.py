@@ -11,10 +11,16 @@ from time import monotonic
 import os
 import hashlib
 import gzip
-from datetime import date
+import faulthandler
+import signal
+from datetime import date,datetime
+from zoneinfo import ZoneInfo
+from contextlib import closing
+from threading import Lock
 from market import symbol_code
 from relay import OpenDFeed, SnapshotManager
 from providers import tempest_payload
+from cloud_analysis import CloudAnalysis
 
 LOOPBACK = '127.0.0.1'
 WEB_PORT = 8766
@@ -23,18 +29,31 @@ VERSION = '2026-11-10-replay-validation-v2'
 def source_revision():
     root=Path(__file__).resolve().parent
     return hashlib.sha256(b''.join((root/name).read_bytes() for name in
-        ['opend_board.py','relay.py','market.py','providers.py','snapshots.py','spx_calibration.py','strike_history.py','exposures.py','zero_gamma.py'])).hexdigest()[:16]
+        ['opend_board.py','relay.py','market.py','providers.py','snapshots.py','spx_calibration.py','strike_history.py','exposures.py','zero_gamma.py','cloud_analysis.py'])).hexdigest()[:16]
 
 LOADED_REVISION=source_revision()
 
 
 def handler(feed, origin, web_port=WEB_PORT, manager=None):
+    analysis=CloudAnalysis(feed.store)
+    response_cache={};response_lock=Lock()
+    allowed_hosts={f'{LOOPBACK}:{web_port}',urlsplit(origin).netloc}
     class Handler(SimpleHTTPRequestHandler):
-        def json_response(self, result, code=200, store_ms=None):
+        def json_response(self, result, code=200, store_ms=None, cache_key=None):
             started=monotonic()
-            body = json.dumps(result, allow_nan=False).encode('utf-8')
-            encoded=(len(body)>4096 and 'gzip' in self.headers.get('Accept-Encoding','').lower())
-            if encoded:body=gzip.compress(body,compresslevel=1)
+            accepts_gzip='gzip' in self.headers.get('Accept-Encoding','').lower()
+            key=(cache_key,accepts_gzip)
+            def encode():
+                body=json.dumps(result,allow_nan=False).encode('utf-8')
+                encoded=len(body)>4096 and accepts_gzip
+                return (gzip.compress(body,compresslevel=1) if encoded else body),encoded
+            if cache_key:
+                with response_lock:
+                    if key not in response_cache:
+                        response_cache[key]=encode()
+                        while len(response_cache)>32:response_cache.pop(next(iter(response_cache)))
+                    body,encoded=response_cache[key]
+            else:body,encoded=encode()
             self.send_response(code)
             self.cors()
             self.send_header('Content-Type', 'application/json; charset=utf-8')
@@ -66,7 +85,7 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
             return self.headers.get('Origin') in {None, f'http://{LOOPBACK}:{web_port}', origin}
 
         def do_OPTIONS(self):
-            if self.headers.get('Host') != f'{LOOPBACK}:{web_port}' or not self.allowed():
+            if self.headers.get('Host') not in allowed_hosts or not self.allowed():
                 return self.json_response({'error': 'Origin or Host denied'}, 403)
             self.send_response(204)
             self.cors()
@@ -74,7 +93,7 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
             self.end_headers()
 
         def do_GET(self):
-            if self.headers.get('Host') != f'{LOOPBACK}:{web_port}' or not self.allowed():
+            if self.headers.get('Host') not in allowed_hosts or not self.allowed():
                 return self.json_response({'error': 'Origin or Host denied'}, 403)
             path = urlsplit(self.path)
             if path.path.startswith('/api/'):
@@ -92,6 +111,32 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                     symbol, _ = symbol_code(parse_qs(path.query).get('symbol', [''])[0])
                     started=monotonic()
                     print(json.dumps({'event':'request-start','path':path.path,'symbol':symbol}),flush=True)
+                    if path.path == '/api/watchlist':
+                        quotes={}
+                        with closing(feed.store.connect()) as db:
+                            for key,raw in db.execute('SELECT symbol,meta FROM price_meta'):
+                                meta=json.loads(raw)
+                                quotes[key]={k:meta.get(k) for k in ('spot','previousClose','previousCloseDate','priceSymbol')}
+                            for key,raw in db.execute('SELECT symbol,frame FROM captures WHERE (symbol,at) IN (SELECT symbol,MAX(at) FROM captures GROUP BY symbol)'):
+                                if not quotes.get(key,{}).get('spot'):
+                                    f=json.loads(raw);quotes[key]={k:f.get(k) for k in ('spot','previousClose','previousCloseDate','priceSymbol')}
+                        cash=quotes.get('SPXW',{})
+                        quotes['SPX']=cash if cash.get('priceSymbol')=='SPX' and cash.get('spot') and not cash['spot'].get('estimated') and cash['spot'].get('source','').find('option')<0 else {}
+                        return self.json_response({'quotes':quotes})
+                    if path.path == '/api/replay-frame':
+                        q=parse_qs(path.query);cutoff=datetime.fromisoformat(q['asof'][0].replace('Z','+00:00'))
+                        if cutoff.tzinfo is None:raise ValueError('Replay cutoff needs timezone')
+                        day=cutoff.astimezone(ZoneInfo('America/New_York')).date().isoformat()
+                        with closing(feed.store.connect()) as db:
+                            row=db.execute("SELECT frame FROM captures WHERE symbol=? AND json_extract(frame,'$.sessionDate')=? AND julianday(at)<=julianday(?) AND julianday(COALESCE(json_extract(frame,'$.optionLastAt'),at))<=julianday(?) ORDER BY at DESC LIMIT 1",(symbol,day,q['asof'][0],q['asof'][0])).fetchone()
+                        frame=json.loads(row[0]) if row else None
+                        if frame:frame.pop('price',None);frame.pop('bars',None)
+                        return self.json_response({'frame':frame,'asof':q['asof'][0]})
+                    if path.path == '/api/analysis':
+                        q=parse_qs(path.query);dates=q.get('expiries',[''])[0].split(',')
+                        if len(dates)>12:raise ValueError('Too many expiries')
+                        for expiry in dates:date.fromisoformat(expiry)
+                        return self.json_response(analysis.request(symbol,dates,q['asof'][0],q['capture'][0],q.get('metric',['GEX'])[0],int(q.get('minutes',['5'])[0]),int(q.get('top',['5'])[0]),float(q.get('threshold',['10'])[0]),q.get('session',['ALL'])[0],q.get('scope',['chart'])[0],q.get('replay',['0'])[0]=='1',q.get('client',['default'])[0]))
                     if path.path == '/api/zero-gamma':
                         query=parse_qs(path.query);expiries=query.get('expiries',[''])[0].split(',')
                         if len(expiries)>12:raise ValueError('Too many expiries')
@@ -117,24 +162,48 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                         return self.json_response(tempest_payload(symbol))
                     if path.path == '/api/history':
                         query=parse_qs(path.query)
+                        raw_history=query.get('raw',['0'])[0]=='1'
                         requested_day=query.get('date',[None])[0]
                         if requested_day:date.fromisoformat(requested_day)
                         start=query.get('from',[None])[0];end=query.get('to',[None])[0]
                         if start or end:
                             if not start or not end:raise ValueError('History range needs from and to')
-                            from datetime import datetime
                             for value in [start,end]:
                                 if datetime.fromisoformat(value.replace('Z','+00:00')).tzinfo is None:raise ValueError('History range needs timezone')
                             frames=feed.store.window(symbol,start,end,int(query.get('bucket',['5'])[0]),
-                                full=query.get('full',['0'])[0]=='1')
+                                full=query.get('full',['0'])[0]=='1',metadata=os.environ.get('GEX_CLOUD')=='1' and not raw_history)
                         else:frames=feed.store.history(symbol,day=requested_day)
+                        if os.environ.get('GEX_CLOUD')=='1' and not raw_history:
+                            for f in frames:
+                                if f is not frames[-1] and not (0<=(datetime.fromisoformat(f['sessionClose'].replace('Z','+00:00'))-datetime.fromisoformat(f['collectedAt'].replace('Z','+00:00'))).total_seconds()<=90):
+                                    f['cells']=[];f['cloudMeta']=True
+                                f.pop('listedStrikes',None);f.pop('price',None)
                         return self.json_response({'symbol': symbol, 'frames':frames},store_ms=(monotonic()-started)*1000)
                     if path.path == '/api/price':
-                        return self.json_response(manager.request_price(symbol) if manager else feed.price(symbol))
-                    if path.path == '/api/snapshot':
-                        return self.json_response(manager.request(symbol) if manager else feed.collect(symbol))
-                    if path.path == '/api/refresh':
-                        return self.json_response(manager.request(symbol,force=True) if manager else feed.collect(symbol))
+                        result=manager.request_price(symbol) if manager else feed.price(symbol)
+                        if os.environ.get('GEX_CLOUD')=='1':result={**result,'bars':result.get('bars',[])[-3:]}
+                        last=(result.get('bars') or [{}])[-1]
+                        return self.json_response(result,cache_key=('price',symbol,result.get('collectedAt'),len(result.get('bars',[])),(result.get('bars') or [{}])[0].get('at'),(result.get('spot') or {}).get('at'),(result.get('spot') or {}).get('value'),last.get('at'),last.get('h'),last.get('l'),last.get('c'),json.dumps(result.get('service',{}),sort_keys=True)))
+                    if path.path in ('/api/snapshot','/api/refresh'):
+                        force=path.path=='/api/refresh'
+                        expiry=parse_qs(path.query).get('expiry',[None])[0]
+                        if expiry:
+                            date.fromisoformat(expiry)
+                            if expiry < datetime.now(ZoneInfo('America/New_York')).date().isoformat():
+                                raise ValueError('Expired option chains require recorded Replay history')
+                            with feed.expiry_lock:
+                                changed=feed.requested_expiries.get(symbol)!=expiry
+                                feed.requested_expiries[symbol]=expiry
+                            force=force or changed
+                        result=manager.request(symbol,force=force) if manager else feed.collect(symbol,force=force)
+                        since=parse_qs(path.query).get('since',[None])[0]
+                        if since and result.get('collectedAt')==since:
+                            return self.json_response({'source':'opend','symbol':symbol,'status':'unchanged',
+                                'collectedAt':since,'service':result.get('service',{})})
+                        if os.environ.get('GEX_CLOUD')=='1':
+                            result={k:v for k,v in result.items() if k!='bars'}
+                            if result.get('price'):result['price']={**result['price'],'bars':result['price'].get('bars',[])[-3:]}
+                        return self.json_response(result,cache_key=('snapshot',symbol,result.get('collectedAt'),json.dumps(result.get('service',{}),sort_keys=True)))
                     return self.json_response({'error': 'Unknown API'}, 404)
                 except ValueError as error:
                     return self.json_response({'error': str(error),'category':'INVALID_CODE'}, 400)
@@ -143,7 +212,7 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                     category='TIMEOUT' if isinstance(error,TimeoutError) or 'timeout' in message.lower() else 'INVALID_CODE' if any(x in message.lower() for x in ['未知股票','unknown stock','unknown security','invalid stock']) else 'PERMISSION' if any(x in message.lower() for x in ['权限','permission','entitlement']) else 'NO_OPTIONS' if '期权链' in message else 'UNAVAILABLE'
                     print(json.dumps({'event':'request-error','path':path.path,'symbol':symbol,'error':message,'seconds':round(monotonic()-started,3)},ensure_ascii=True),flush=True)
                     return self.json_response({'error':message,'category':category}, 504 if category=='TIMEOUT' else 400 if category=='INVALID_CODE' else 502)
-            assets = {'/', '/index.html', '/app.js', '/model.js', '/chart.js', '/replay.js', '/spx-proxy.js', '/tools.js','/expected.js','/gex-export.js','/style.css','/structure.js','/v3-ui.js',
+            assets = {'/', '/index.html', '/app.js', '/model.js', '/chart.js', '/replay.js', '/spx-proxy.js', '/tools.js','/expected.js','/gex-export.js','/style.css','/structure.js','/v3-ui.js','/cloud-client.js','/symbol-list.js',
                       '/vendor/lightweight-charts.standalone.production.js', '/vendor/NOTICE', '/vendor/LICENSE',
                       '/opend-gex-relay.zip'}
             if path.path == '/favicon.ico':
@@ -161,6 +230,8 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
 
 
 def main():
+    if hasattr(signal,'SIGUSR1'):
+        faulthandler.register(signal.SIGUSR1, all_threads=True)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--opend-port', type=int, default=11111)
     parser.add_argument('--web-port', type=int, default=WEB_PORT)

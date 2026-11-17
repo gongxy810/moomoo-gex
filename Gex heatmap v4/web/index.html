@@ -13,6 +13,7 @@
   <div class="brand"><span class="brand-mark" aria-hidden="true">ϟ</span><span>OpenD <strong>GEX</strong></span></div>
   <span class="quiet top-label">MARKET STRUCTURE</span>
   <div class="spacer"></div>
+  <label class="compute-mode">Compute <select id="compute-mode" aria-label="GEX calculation location"><option value="cloud" selected>Cloud</option><option value="local">Local</option></select></label>
   <span id="feed-state" class="pill warn" role="status">Connecting</span>
   <button id="connect" type="button">Data source</button>
 </header>
@@ -54,7 +55,7 @@
 <p class="chart-attribution">TradingView Lightweight Charts™ · Copyright (с) 2025 TradingView, Inc. <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">TradingView</a></p>
 </main>
 <dialog id="symbol-dialog">
-  <div class="dialog-head"><h2>选择这一列的标的</h2><form method="dialog"><button aria-label="Close symbol selector">×</button></form></div>
+  <div class="dialog-head"><h2>选择标的</h2><form method="dialog"><button aria-label="Close symbol selector">×</button></form></div>
   <form id="symbol-form"><label for="symbol-input">OpenD 代码</label><input id="symbol-input" placeholder="SPY / NVDA / US.AAPL" autocomplete="off" maxlength="25"><button type="submit">确认</button></form>
   <p id="symbol-error" role="status"></p><div id="symbol-options"></div>
   <p class="quiet">SPX = 现金指数；SPXW = PM 结算期权。选择 SPX 会显示 SPX 价格 / SPXW 期权，不混入传统月度 SPX 合约。</p>

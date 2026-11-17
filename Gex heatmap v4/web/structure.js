@@ -24,15 +24,19 @@ export function velocityBoard(frame,dates,history){
   return {entries,up:[...ranked].filter(e=>e.periods[1].magnitude>0).sort((a,b)=>b.periods[1].magnitude-a.periods[1].magnitude).slice(0,3),
     down:[...ranked].filter(e=>e.periods[1].magnitude<0).sort((a,b)=>a.periods[1].magnitude-b.periods[1].magnitude).slice(0,3)};
 }
+const touchCache=new WeakMap();
+const touchDay=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
+const touchTime=new Intl.DateTimeFormat('en-GB',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
 export function nodeTouches(strike,bars,cutoff,day,sourceMinutes=1){
-  if(sourceMinutes!==1||!bars.some(b=>b.phase==='RTH'&&Date.parse(b.at)+60000<=cutoff&&new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York'}).format(Date.parse(b.at))===day))return null;
-  const fmt=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'});
-  const first=bars.filter(b=>b.phase==='RTH'&&fmt.format(Date.parse(b.at))===day).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at))[0];
-  if(!first||new Intl.DateTimeFormat('en-GB',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(Date.parse(first.at))!=='09:30')return null;
+  if(sourceMinutes!==1)return null;
+  let cached=touchCache.get(bars);
+  if(!cached||cached.cutoff!==cutoff||cached.day!==day){
+    const candles=bars.filter(b=>b.phase==='RTH'&&Date.parse(b.at)+60000<=cutoff&&touchDay.format(Date.parse(b.at))===day).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
+    cached={cutoff,day,candles,valid:!!candles.length&&touchTime.format(Date.parse(candles[0].at))==='09:30'};touchCache.set(bars,cached);
+  }
+  if(!cached.valid)return null;
   let count=0,inside=false,prior=null;
-  for(const b of [...bars].sort((a,b)=>Date.parse(a.at)-Date.parse(b.at))){const t=Date.parse(b.at);
-    if(t+60000>cutoff||fmt.format(t)!==day||b.phase!=='RTH')continue;
-    if(prior===t)continue;
+  for(const b of cached.candles){const t=Date.parse(b.at);if(prior===t)continue;
     const hit=b.l<=strike&&b.h>=strike;if(hit&&(!inside||t-prior>60000))count++;inside=hit;prior=t;
   }return count;
 }

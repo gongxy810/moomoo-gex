@@ -9,14 +9,29 @@ import math
 import re
 import socket
 import json
+import os
 from market import Calendar, ET, iso, quote, stamp, symbol_code, verified_close
 from snapshots import SnapshotStore
 from exposures import vex_cell
+from supabase_sink import LatestMirror
 from spx_calibration import calibration_reference
 from providers import OpenDPriceProvider, RoutedPriceProvider
+from option_stream import OptionStream, PriceTickerStream
 
 MODEL = 'OI-gamma-100-unadjusted-v1'
 CAPTURE_VERSION = 'gex-collection-wide-v3'
+CLOUD_HISTORY_SYMBOLS = ('SPY', 'QQQ', 'SPXW', 'IWM', 'AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA')
+
+
+def default_history_symbols():
+    if os.environ.get('GEX_CLOUD') != '1':
+        return ('SPY', 'QQQ', 'SPXW')
+    configured = os.environ.get('GEX_HISTORY_SYMBOLS')
+    values = configured.split(',') if configured is not None else CLOUD_HISTORY_SYMBOLS
+    # SPX and SPXW are two UI entries for the same option root.
+    return tuple(dict.fromkeys(symbol_code(value.strip())[0] for value in values if value.strip()))
+
+
 SNAPSHOT_INTERVAL = 1.0  # Official quota: 60 calls / 30s, <=400 codes; keep 50% call headroom.
 SNAPSHOT_LOCK = Lock()
 LAST_SNAPSHOT_AT = 0.0
@@ -159,7 +174,13 @@ class OpenDFeed:
         self.port, self.ctx, self.sdk = port, None, None
         self.cache, self.chains, self.price_cache, self.calendars, self.daily_cache = {}, {}, {}, {}, {}
         self.subscriptions, self.lock = set(), RLock()
-        self.store = store or SnapshotStore(Path(__file__).parent/'data'/'captures.sqlite3')
+        self.option_stream = None
+        self.price_ticks = None
+        self.intraday_repairs = {}
+        self.expiry_lock = Lock()
+        self.requested_expiries = {}
+        self.store = store or SnapshotStore(Path(os.environ.get('GEX_DATA_DIR',str(Path(__file__).parent/'data')))/'captures.sqlite3')
+        self.mirror=LatestMirror() if not price_only else None
         self.last_snapshot = 0
         self.price_feed = None if price_only else OpenDFeed(port,self.store,price_only=True)
         self.price_provider = RoutedPriceProvider(OpenDPriceProvider(self.price_feed or self), spx_cash_provider)
@@ -174,7 +195,13 @@ class OpenDFeed:
                 pass
             import moomoo
             self.sdk = moomoo
-            self.ctx = moomoo.OpenQuoteContext(host='127.0.0.1', port=self.port)
+            # SDK defaults to an unlimited wait for reconnection. A dropped
+            # tunnel must fail a job and retry, never hold both collectors forever.
+            self.ctx = moomoo.OpenQuoteContext(host='127.0.0.1', port=self.port,is_async_connect=True)
+            self.ctx.set_sync_query_connect_timeout(8)
+            if self.price_feed is not None:
+                self.option_stream = OptionStream(moomoo, self.ctx)
+            else:self.price_ticks = PriceTickerStream(moomoo,self.ctx)
             print(json.dumps({'event':'opend-connect','seconds':round(monotonic()-started,3),'role':'price' if self.price_feed is None else 'options'}),flush=True)
 
     def records(self, method, *args, **kwargs):
@@ -194,7 +221,7 @@ class OpenDFeed:
             if attempt == 0 and any(w in message.lower() for w in ['frequency', '频率', 'too frequent']):
                 sleep(3)
                 continue
-            if attempt==0 and any(w in message.lower() for w in ['disconnected','connection closed','broken pipe','连接断开','连接失败']):
+            if attempt==0 and any(w in message.lower() for w in ['disconnected','connection closed','broken pipe','timeout','连接断开','连接失败']):
                 self.reconnect();method=getattr(self.ctx,method.__name__);continue
             raise RuntimeError(message)
 
@@ -202,7 +229,27 @@ class OpenDFeed:
         if self.ctx:
             try:self.ctx.close()
             except Exception:pass
-        self.ctx=None;self.subscriptions.clear();self.connect()
+        self.ctx=None;self.option_stream=None;self.price_ticks=None;self.subscriptions.clear();self.intraday_repairs.clear();self.connect()
+
+    def repair_intraday(self,code,rows,now):
+        """Recover actual minute candles missed while the SDK was disconnected."""
+        if code=='US..SPX':return rows,None
+        day=now.astimezone(ET).date().isoformat()
+        previous=self.intraday_repairs.get(code)
+        if previous and previous[0]==day and (previous[2] or monotonic()-previous[1]<300):return rows,None
+        self.intraday_repairs[code]=(day,monotonic(),False)
+        try:
+            history=self.records(self.ctx.request_history_kline,code,start=day,end=day,
+                ktype=self.sdk.KLType.K_1M,autype=self.sdk.AuType.NONE,max_count=1000,extended_time=True)
+            merged={r['time_key']:r for r in rows}
+            merged.update({r['time_key']:r for r in history})
+            # Keep the newest official push for the still-open minute only.
+            for row in rows:
+                at=stamp(row.get('time_key'))
+                if at and at>=now.replace(second=0,microsecond=0):merged[row['time_key']]=row
+            self.intraday_repairs[code]=(day,monotonic(),bool(history))
+            return sorted(merged.values(),key=lambda r:r['time_key']),None
+        except RuntimeError as error:return rows,'Minute history repair unavailable: '+str(error)
 
     def validate(self, raw):
         """Separate SDK connection/lock. Never downloads a chain, Greeks or OHLC here."""
@@ -280,19 +327,24 @@ class OpenDFeed:
         self.daily_cache[code] = (monotonic(), rows, day)
         return rows
 
-    def subscribe(self, code, subtype):
-        key = (code, subtype)
+    def subscribe(self, code, subtype, push=False):
+        key = (code, subtype, bool(push))
         if key not in self.subscriptions:
-            ret, message = self.ctx.subscribe([code], [subtype], subscribe_push=False, extended_time=True)
-            if ret != self.sdk.RET_OK:
-                raise RuntimeError(str(message))
+            self.records(self.ctx.subscribe,[code],[subtype],subscribe_push=push,extended_time=True)
             self.subscriptions.add(key)
 
     def spot(self, symbol, code, now, calendar, daily):
+        try:
+            self.subscribe(code,self.sdk.SubType.TICKER,push=True)
+            tick=self.price_ticks.get(code) if self.price_ticks else None
+            if tick and 0<=(now-stamp(tick['time'])).total_seconds()<=5:
+                result=quote(symbol,{},[tick],now,calendar,daily)
+                result['source']='OpenD ticker push';return result
+        except RuntimeError:pass
         rows = self.snapshots([code])
         ticks = []
         try:
-            self.subscribe(code, self.sdk.SubType.TICKER)
+            self.subscribe(code, self.sdk.SubType.TICKER,push=True)
             ticks = self.records(self.ctx.get_rt_ticker, code, num=100)
         except RuntimeError:
             pass
@@ -300,13 +352,62 @@ class OpenDFeed:
 
     def price(self, raw):
         symbol, _ = symbol_code(raw)
-        return self.price_provider.get(symbol)
+        return self.push_price(self.price_provider.get(symbol),symbol)
+
+    def push_price(self,price,symbol):
+        feed=self.price_feed or self
+        ticks=getattr(feed,'price_ticks',None)
+        _,code=symbol_code(symbol);now=datetime.now(timezone.utc)
+        tick=ticks.get(code) if ticks else None
+        calendar=feed.calendars.get((code.split('.')[0],str(now.astimezone(ET).date())))
+        daily=feed.daily_cache.get(code)
+        if ticks and calendar:
+            live_bars=[{**bar,'phase':calendar.phase(stamp(bar['at']))} for bar in ticks.get_bars(code)]
+            if live_bars:
+                merged=sorted({bar['at']:bar for bar in [*price.get('bars',[]),*live_bars]}.values(),key=lambda bar:bar['at'])[-2000:]
+                price={**price,'bars':merged,'barAt':merged[-1]['at'],'barMinutes':1,'candleSource':'OpenD subscribed K_1M'}
+        if tick and calendar and 0<=(now-stamp(tick['time'])).total_seconds()<=15:
+            spot=quote(symbol,{},[tick],now,calendar,daily[1] if daily else [])
+            if spot['current'] and (not price.get('spot') or stamp(spot['at'])>=stamp(price['spot']['at'])):
+                spot['source']='OpenD ticker push';spot['label']='OpenD ticker push · '+spot['status']
+                return {**price,'spot':spot,'quoteAt':spot['at'],'delayed':False,
+                        'previousClose':spot['previousClose'],'previousCloseDate':spot['previousCloseDate']}
+        return price
 
     def _opend_price(self, raw):
         symbol, code = symbol_code(raw)
         cached=self.price_cache.get(symbol)
         if cached and monotonic()-cached[0]<15:
             return cached[1]
+        # Reuse subscribed trades/candles between periodic full repairs. Reading
+        # 1000 SDK candles for every root every 15s wastes the small cloud CPU.
+        if cached:
+            now=datetime.now(timezone.utc)
+            updated=self.push_price(cached[1],symbol)
+            spot=updated.get('spot') or {}
+            bars=updated.get('bars',[])
+            if (symbol!='SPXW' and spot.get('source')=='OpenD ticker push' and bars and
+                0<=(now-stamp(spot.get('at'))).total_seconds()<=15 and
+                0<=(now-stamp(bars[-1]['at'])).total_seconds()<=120 and
+                0<=(now-stamp(cached[1]['collectedAt'])).total_seconds()<120):
+                # Some OpenD sessions stop pushing K_1M while trades continue.
+                # Repair only the two latest official candles, not 1000 bars.
+                with self.lock:
+                    try:
+                        recent=self.records(self.ctx.get_cur_kline,code,2,ktype=self.sdk.KLType.K_1M,autype=self.sdk.AuType.NONE)
+                        calendar=self.calendars.get((code.split('.')[0],str(now.astimezone(ET).date())))
+                        patched=[]
+                        for row in recent:
+                            at=stamp(row.get('time_key'));values=[positive(row.get(k)) for k in ('open','high','low','close')]
+                            if at and at<=datetime.now(timezone.utc) and all(values):
+                                patched.append(dict(at=iso(at),o=values[0],h=values[1],l=values[2],c=values[3],phase=calendar.phase(at) if calendar else spot.get('phase')))
+                        if patched:
+                            bars=sorted({b['at']:b for b in [*bars,*patched]}.values(),key=lambda b:b['at'])[-2000:]
+                            updated={**updated,'bars':bars,'barAt':bars[-1]['at']}
+                    except RuntimeError:pass
+                self.store.save_price(symbol,bars[-2:],{k:v for k,v in updated.items() if k!='bars'})
+                self.price_cache[symbol]=(monotonic(),updated)
+                return updated
         queued=monotonic()
         with self.lock:
             pipeline={};stage=monotonic()
@@ -336,8 +437,10 @@ class OpenDFeed:
             pipeline['spot']=round(monotonic()-stage,3)
             try:
                 stage=monotonic()
-                self.subscribe(code, self.sdk.SubType.K_1M)
+                self.subscribe(code, self.sdk.SubType.K_1M,push=True)
                 raw_bars = self.records(self.ctx.get_cur_kline, code, 1000, ktype=self.sdk.KLType.K_1M, autype=self.sdk.AuType.NONE)
+                raw_bars,repair_error=self.repair_intraday(code,raw_bars,now)
+                if repair_error:warnings.append(repair_error)
                 for b in raw_bars:
                     at = stamp(b.get('time_key'))
                     values = [positive(b.get(key)) for key in ['open', 'high', 'low', 'close']]
@@ -346,7 +449,12 @@ class OpenDFeed:
             except RuntimeError as error:
                 warnings.append('K 线不可用 · '+str(error))
             pipeline['bars']=round(monotonic()-stage,3)
+            if cached:
+                # A short OpenD subscription buffer must never erase candles
+                # already recovered from official minute history.
+                bars=list({b['at']:b for b in [*cached[1].get('bars',[]),*bars]}.values())
             bars.sort(key=lambda b: b['at'])
+            bars=bars[-2000:]
             if spot is None and bars:
                 last = bars[-1]
                 spot = {'value': last['c'], 'at': last['at'], 'phase': last['phase'], 'status': 'REF',
@@ -362,7 +470,7 @@ class OpenDFeed:
                             'status': 'Close' if same else 'REF', 'current': False, 'comparable': same,
                             'source': 'OpenD unadjusted daily close', 'label': 'Verified daily close' if same else 'REF · old daily close'}
             previous = verified_close(daily, meta['previousSession'])
-            supplement = supplemental_close(Path(__file__).resolve().parent/'data'/'verified-index-closes.json', symbol, meta['previousSession']) if previous is None else None
+            supplement = supplemental_close(Path(os.environ.get('GEX_DATA_DIR',str(Path(__file__).parent/'data')))/'verified-index-closes.json', symbol, meta['previousSession']) if previous is None else None
             if supplement:
                 previous = float(supplement['close'])
             result = {'symbol': symbol, 'priceSymbol': 'SPX' if symbol=='SPXW' else symbol, 'source': 'OpenD',
@@ -377,6 +485,8 @@ class OpenDFeed:
                 result['previousCloseUrl'] = supplement['url']
                 result['previousCloseKind'] = 'verified cash index daily close'
             result['sessions'] = {d:iso(calendar.close(d)) for d in calendar.days}
+            repair=self.intraday_repairs.get(code)
+            if repair and repair[2]:result['minuteHistoryRevision']=f'{repair[0]}:{repair[1]}'
             result['dailyCloses'] = [{'date':str(r.get('time_key',''))[:10],'close':positive(r.get('close'))} for r in daily]
             result['pipeline']={**pipeline,'queue':round(monotonic()-queued-sum(pipeline.values()),3)}
             self.store.save_price(symbol, bars, {k:v for k,v in result.items() if k!='bars'})
@@ -384,8 +494,10 @@ class OpenDFeed:
             return result
 
     def chain(self, symbol, code, day):
+        with self.expiry_lock:
+            requested = self.requested_expiries.get(symbol)
         cached = self.chains.get(symbol)
-        if cached and cached[3]==day and monotonic()-cached[0] < 300:
+        if cached and cached[3]==day and len(cached)>4 and cached[4]==requested and monotonic()-cached[0] < 3600:
             return cached[1], cached[2]
         errors = []
         owners = [code, 'US.SPX', 'US.SPXW'] if symbol=='SPXW' else [code]
@@ -398,12 +510,14 @@ class OpenDFeed:
                     dates = sorted({spec[0] for spec in contracts.values()})
                     # Some index servers support chain but time out on expiration listing.
                     # Never make that auxiliary endpoint a prerequisite for SPXW.
-                    if symbol != 'SPXW':
-                        try:
-                            dates = sorted({str(r['strike_time'])[:10] for r in self.records(self.ctx.get_option_expiration_date, owner)})
-                        except RuntimeError:
-                            pass
-                    self.chains[symbol] = (monotonic(), contracts, dates, day)
+                    try:
+                        dates = sorted(set(dates) | {str(r['strike_time'])[:10] for r in self.records(self.ctx.get_option_expiration_date, owner)})
+                    except RuntimeError:
+                        pass
+                    if requested and requested not in {spec[0] for spec in contracts.values()}:
+                        extra = self.records(self.ctx.get_option_chain, owner, start=requested, end=requested)
+                        contracts.update(contracts_from_chain(symbol, extra))
+                    self.chains[symbol] = (monotonic(), contracts, dates, day, requested)
                     return contracts, dates
             except RuntimeError as error:
                 errors.append(str(error))
@@ -440,7 +554,10 @@ class OpenDFeed:
             price = self.price(symbol)
             pipeline['price']=round(monotonic()-stage,3)
             spot, warnings = price['spot'], list(price['warnings'])
-            dates = sorted({spec[0] for spec in chain.values()})[:6]
+            available_sampled = sorted({spec[0] for spec in chain.values()})
+            with self.expiry_lock:
+                requested = self.requested_expiries.get(symbol)
+            dates = sorted(set(available_sampled[:6]) | ({requested} if requested in available_sampled else set()))
             if spot is None and symbol=='SPXW':
                 stage=monotonic()
                 close = calendar.close(day)
@@ -469,6 +586,8 @@ class OpenDFeed:
                 near.update(k for k in strikes if abs(k/spot['value']-1)<=.08 and abs(k/step-round(k/step))<1e-8)
                 chosen.update({c: spec for c, spec in chain.items() if spec[0]==expiry and spec[1] in near})
             rows = []
+            if self.option_stream:
+                self.option_stream.configure(symbol, chosen, spot['value'])
             stage=monotonic()
             for offset in range(0, len(chosen), 400):
                 try:
@@ -490,6 +609,13 @@ class OpenDFeed:
                     'dates': dates, 'availableDates': available, 'cells': cells, 'bars': price['bars'],
                     'price': price, 'warnings': warnings, 'refreshSeconds': 30, 'pipeline':pipeline, **calendar.payload(start)}
             frame['expiryCloses']={d:iso(calendar.close(d)) for d in dates if calendar.close(d)}
+            for d in dates:
+                if not frame['expiryCloses'].get(d):
+                    # Ask OpenD for that expiry's actual session, including half days.
+                    expiry_calendar = self.calendar(code, datetime.fromisoformat(d).replace(tzinfo=ET))
+                    frame['expiryCloses'][d] = iso(expiry_calendar.close(d)) if expiry_calendar.close(d) else None
+            if self.option_stream:
+                frame['optionStream'] = self.option_stream.status(symbol)
             frame['listedStrikes']={d:sorted({k for e,k,_ in chain.values() if e==d}) for d in dates}
             for cell in cells:
                 vex=vex_cell(cell,frame)
@@ -501,28 +627,36 @@ class OpenDFeed:
             stage=monotonic()
             self.cache[symbol] = (monotonic(), frame)
             self.store.save(frame)
+            if self.mirror:self.mirror.submit(frame)
             pipeline['save']=round(monotonic()-stage,3)
             return frame
 
 
 class SnapshotManager:
     """Shared per-process capture owner. HTTP readers never wait for the OpenD option chain."""
-    def __init__(self, feed, interval=30, watched=('SPY','QQQ','SPXW')):
+    def __init__(self, feed, interval=30, watched=None):
+        watched = default_history_symbols() if watched is None else watched
         self.feed,self.interval=feed,interval
         self.lock=RLock();self.pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-capture')
+        # Interactive work can bypass queued archival roots. OpenDFeed.lock still
+        # serializes SDK chain reads; a running capture is always joined.
+        self.priority_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-focus')
         self.latest={};self.jobs={};self.status={};self.price_latest={};self.price_jobs={};self.price_status={}
+        self.stream_versions={}
+        self.visible={}
         self.price_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-price')
+        self.always=set(watched) if os.environ.get('GEX_CLOUD')=='1' else set()
         self.watched={symbol:monotonic() for symbol in watched}
         self.closed=False
         self.timer=Thread(target=self._poll,name='gex-scheduler',daemon=True);self.timer.start()
-        for symbol in watched:self.request_price(symbol)
-        for symbol in watched:self.request(symbol)
+        for symbol in watched:self.request_price(symbol,observe=False)
+        for symbol in watched:self.request(symbol,observe=False)
 
     def _poll(self):
         while not self.closed:
             sleep(1)
             if self.closed:return
-            with self.lock:active=[s for s,t in self.watched.items() if monotonic()-t<1800]
+            with self.lock:active=[s for s,t in self.watched.items() if s in self.always or monotonic()-t<1800]
             for symbol in active:
                 self.request(symbol,observe=False)
                 self.request_price(symbol,observe=False)
@@ -540,6 +674,7 @@ class SnapshotManager:
                     self.price_status[symbol]={**state,'phase':'collecting','startedAt':iso(datetime.now(timezone.utc))}
                     self.price_jobs[symbol]=self.price_pool.submit(self._collect_price,symbol)
             price=self.price_latest.get(symbol)
+            if price and hasattr(self.feed,'push_price'):price=self.feed.push_price(price,symbol)
             status={k:v for k,v in self.price_status.get(symbol,{}).items() if k!='finishedMono'}
             status['stale']=(not price or not price.get('spot') or
                 (datetime.now(timezone.utc)-datetime.fromisoformat(price['spot']['at'])).total_seconds()>120)
@@ -561,18 +696,48 @@ class SnapshotManager:
 
     def request(self, symbol, force=False, observe=True):
         with self.lock:
-            if observe:self.watched[symbol]=monotonic()
+            if observe:self.watched[symbol]=monotonic();self.visible[symbol]=monotonic()
+            interactive=monotonic()-self.visible.get(symbol,float('-inf'))<10
             if symbol not in self.latest:
                 frame=self.feed.store.latest(symbol)
-                if frame and frame.get('model')==MODEL and frame.get('symbol')==symbol and frame.get('optionRoot') and frame.get('dates') and frame.get('cacheKey',cache_identity(frame))==cache_identity(frame):
+                if frame and frame.get('model')==MODEL and frame.get('symbol')==symbol and frame.get('optionRoot') and frame.get('dates') and all(frame.get('cacheKey',cache_identity(frame)).get(k)==cache_identity(frame).get(k) for k in ('symbol','optionRoot','dates','model')):
                     self.latest[symbol]=frame
+                    mirror=getattr(self.feed,'mirror',None)
+                    if mirror:mirror.submit(frame)
             job=self.jobs.get(symbol)
-            if job and not job.done():return self._response(symbol)
             state=self.status.get(symbol,{})
-            if force or not state or monotonic()-state.get('finishedMono',0)>=self.interval:
+            requested=getattr(self.feed,'requested_expiries',{}).get(symbol)
+            frame=self.latest.get(symbol,{})
+            needs_expiry=bool(requested and requested in frame.get('availableDates',[]) and requested not in frame.get('dates',[]))
+            if state.get('phase')=='error' and monotonic()-state.get('finishedMono',0)<30:needs_expiry=False
+            if job and not job.done():
+                if (force or needs_expiry or interactive) and not job.running() and job.cancel():
+                    self._submit_capture(symbol,True,self.priority_pool)
+                return self._response(symbol)
+            force=force or needs_expiry
+            stream=getattr(self.feed,'option_stream',None)
+            version=stream.version(symbol) if stream else 0
+            elapsed=monotonic()-state.get('finishedMono',0)
+            triggered=version!=self.stream_versions.get(symbol,0) and elapsed>=10
+            if force or triggered or not state or elapsed>=self.interval:
+                self.stream_versions[symbol]=version
                 self.status[symbol]={**state,'phase':'collecting','startedAt':iso(datetime.now(timezone.utc))}
-                self.jobs[symbol]=self.pool.submit(self._collect,symbol,force)
+                pool=self.priority_pool if force or interactive else self.pool
+                self._submit_capture(symbol,force or triggered,pool)
             return self._response(symbol)
+
+    def _submit_capture(self,symbol,force,pool):
+        future=pool.submit(self._collect,symbol,force)
+        self.jobs[symbol]=future
+        future.add_done_callback(lambda done:self._capture_finished(symbol,done))
+
+    def _capture_finished(self,symbol,future):
+        if future.cancelled():return
+        frame,status=future.result()
+        with self.lock:
+            if self.jobs.get(symbol) is not future:return
+            if frame:self.latest[symbol]=frame
+            self.status[symbol]=status
 
     def _response(self,symbol):
         frame=self.latest.get(symbol)
@@ -585,15 +750,15 @@ class SnapshotManager:
         started=monotonic()
         try:
             frame=self.feed.collect(symbol,force=force)
-            with self.lock:
-                self.latest[symbol]=frame
-                self.status[symbol]={'phase':'ready','finishedAt':iso(datetime.now(timezone.utc)),
-                    'finishedMono':monotonic(),'captureSeconds':round(monotonic()-started,3)}
+            status={'phase':'ready','finishedAt':iso(datetime.now(timezone.utc)),
+                'finishedMono':monotonic(),'captureSeconds':round(monotonic()-started,3)}
         except Exception as error:
-            with self.lock:
-                self.status[symbol]={'phase':'error','finishedAt':iso(datetime.now(timezone.utc)),
-                    'finishedMono':monotonic(),'captureSeconds':round(monotonic()-started,3),'error':str(error)}
-        print(json.dumps({'event':'background-capture','symbol':symbol,**{k:v for k,v in self.status[symbol].items() if k!='finishedMono'}},ensure_ascii=True),flush=True)
+            frame=None
+            status={'phase':'error','finishedAt':iso(datetime.now(timezone.utc)),
+                'finishedMono':monotonic(),'captureSeconds':round(monotonic()-started,3),'error':str(error)}
+        print(json.dumps({'event':'background-capture','symbol':symbol,**{k:v for k,v in status.items() if k!='finishedMono'}},ensure_ascii=True),flush=True)
+        sleep(.01)  # Yield the shared SDK lock to a waiting foreground/archive worker.
+        return frame,status
 
     def close(self):
-        self.closed=True;self.timer.join();self.pool.shutdown(wait=True,cancel_futures=True);self.price_pool.shutdown(wait=True,cancel_futures=True)
+        self.closed=True;self.timer.join();self.pool.shutdown(wait=True,cancel_futures=True);self.priority_pool.shutdown(wait=True,cancel_futures=True);self.price_pool.shutdown(wait=True,cancel_futures=True)

@@ -26,7 +26,7 @@ export function spotLabel(symbol,spot){
 
 export function frameAt(symbol,history,price,cursor){
   const day=marketDate(cursor);
-  const capture=lastBefore(history.filter(f=>f.sessionDate===day&&(!f.optionLastAt||Date.parse(f.optionLastAt)<=cursor)),cursor);
+  const capture=lastBefore(history.filter(f=>!f.cloudMeta&&f.sessionDate===day&&(!f.optionLastAt||Date.parse(f.optionLastAt)<=cursor)),cursor);
   const sourceMinutes=price?.barMinutes??1;
   const closed=(price?.bars??[]).filter(b=>Date.parse(b.at)+sourceMinutes*60000<=cursor&&marketDate(Date.parse(b.at))===day);
   const lastBar=closed.at(-1);
@@ -80,14 +80,15 @@ export function spotPosition(strikes,value,rowHeight){
 }
 
 export class ReplayClock{
-  constructor(onChange){this.cursor=null;this.playing=false;this.speed=1;this.stepMs=300000;this.timer=null;this.onChange=onChange;this.maximum=Infinity;}
-  seek(at){this.pause();this.cursor=at;this.onChange(at);}
-  step(){if(this.cursor===null)return;const next=this.cursor+this.stepMs;if(next>this.maximum){this.pause();this.onChange(this.cursor);return;}this.cursor=next;if(next+this.stepMs>this.maximum)this.pause();this.onChange(this.cursor);}
+  constructor(onChange){this.cursor=null;this.playing=false;this.speed=1;this.stepMs=300000;this.timer=null;this.onChange=onChange;this.maximum=Infinity;this.ready=Promise.resolve();this.epoch=0;}
+  notify(){this.ready=Promise.resolve(this.onChange(this.cursor)).catch(error=>console.info('replay-data',error.message));}
+  seek(at){this.pause();this.cursor=at;this.notify();}
+  step(){if(this.cursor===null)return;const next=this.cursor+this.stepMs;if(next>this.maximum){this.pause();this.notify();return;}this.cursor=next;if(next+this.stepMs>this.maximum)this.pause();this.notify();}
   play(){if(this.cursor===null||this.playing||this.cursor+this.stepMs>this.maximum)return;this.playing=true;this.tick();}
-  setSpeed(speed){if(![.5,1,2,5,10].includes(speed))return;this.speed=speed;if(this.playing){clearTimeout(this.timer);this.tick();}}
-  tick(){if(!this.playing)return;this.timer=setTimeout(()=>{this.step();this.tick();},1000/this.speed);}
-  pause(){this.playing=false;clearTimeout(this.timer);}
-  exit(){this.pause();this.cursor=null;this.onChange(null);}
+  setSpeed(speed){if(![.5,1,2,5,10].includes(speed))return;this.speed=speed;if(this.playing){this.epoch++;clearTimeout(this.timer);this.tick();}}
+  tick(){if(!this.playing)return;const epoch=this.epoch;this.timer=setTimeout(async()=>{await this.ready;if(!this.playing||epoch!==this.epoch)return;this.step();await this.ready;if(epoch===this.epoch)this.tick();},1000/this.speed);}
+  pause(){this.playing=false;this.epoch++;clearTimeout(this.timer);}
+  exit(){this.pause();this.cursor=null;this.notify();}
 }
 
 // Each bar uses the most recent calibration already observed at its start.

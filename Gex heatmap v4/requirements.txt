@@ -1,2 +1,3 @@
-moomoo-api>=10.5
-tzdata
+moomoo-api==10.12.7208
+tzdata==2026.6
+psycopg[binary]==3.3.9
