@@ -189,10 +189,25 @@ class OpenDFeed:
         self.validation_cache = {}
 
     def connect(self):
+        if self.ctx is not None:
+            ready = str(getattr(self.ctx, 'status', 'READY')).upper().endswith('READY')
+            try:
+                with socket.create_connection(('127.0.0.1', self.port), timeout=0.5):
+                    port_open = True
+            except OSError:
+                port_open = False
+            if ready and port_open:
+                return
+            try:self.ctx.close()
+            except Exception:pass
+            self.ctx=None;self.option_stream=None;self.price_ticks=None;self.subscriptions.clear()
+            self.intraday_repairs.clear()
         if self.ctx is None:
             started=monotonic()
-            with socket.create_connection(('127.0.0.1', self.port), timeout=2):
-                pass
+            try:
+                with socket.create_connection(('127.0.0.1', self.port), timeout=2):pass
+            except OSError as error:
+                raise RuntimeError(f'OpenD offline at 127.0.0.1:{self.port}; start moomoo OpenD and sign in to market data.') from error
             import moomoo
             self.sdk = moomoo
             # SDK defaults to an unlimited wait for reconnection. A dropped
