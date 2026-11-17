@@ -464,7 +464,10 @@ function details(view) {
   profile(view);
   if (!view.shown.length) {
     $('matrix-extremes').replaceChildren();
-    empty($('matrix'),'No matching expirations');empty($('oi'),'No matching contracts');
+    const listed=view.frame?.availableDates?.includes(state.expiry);
+    $('matrix-expiry-status').textContent=listed?`${state.expiry} listed · waiting for its OpenD snapshot`:'No captured expiration';
+    empty($('matrix'),listed?`${state.expiry} 已挂牌；选择后正在按需读取该到期日的期权快照。`:'No matching expirations');
+    empty($('oi'),'No matching contracts');
     return;
   }
   const cutoff=state.replayCursor??Date.now(),session=marketDate(cutoff);
