@@ -124,7 +124,7 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                             # Re-evaluate timestamps at request time. Saved quote
                             # metadata must never stay labeled live after a close.
                             for key in tuple(quotes):
-                                latest=manager.peek_price(key)
+                                latest=manager.peek_price(key,quotes[key])
                                 if latest:
                                     quotes[key]={k:latest.get(k) for k in ('spot','previousClose','previousCloseDate','priceSymbol')}
                         cash=quotes.get('SPXW',{})

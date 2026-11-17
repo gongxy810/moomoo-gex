@@ -737,10 +737,10 @@ class SnapshotManager:
                  'label':f"{spot.get('source','OpenD')} · {status}"}
         return {**price,'spot':revised,'delayed':not fresh}
 
-    def peek_price(self,symbol):
+    def peek_price(self,symbol,fallback=None):
         """Read the latest shared price cache without queueing another SDK request."""
         with self.lock:price=self.price_latest.get(symbol)
-        if price is None:price=self.feed.store.latest_price(symbol)
+        if price is None:price=fallback
         if price and hasattr(self.feed,'push_price'):
             try:price=self.feed.push_price(price,symbol)
             except Exception:pass
