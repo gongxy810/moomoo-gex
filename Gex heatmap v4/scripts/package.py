@@ -10,6 +10,9 @@ files += [p for p in (root/'web').rglob('*') if p.is_file() and p.suffix != '.zi
 files.append(root/'strike_history.py')
 files.append(root/'zero_gamma.py')
 files.append(root/'exposures.py')
+files.append(root/'cloud_analysis.py')
+files.append(root/'supabase_sink.py')
+files += [p for p in (root/'cloud').rglob('*') if p.is_file()]
 files += [p for p in (root/'tradingview').rglob('*') if p.is_file()]
 public_closes = root/'data'/'verified-index-closes.json'
 if public_closes.is_file():
