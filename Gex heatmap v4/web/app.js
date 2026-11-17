@@ -467,17 +467,29 @@ function details(view) {
     empty($('matrix'),'No matching expirations');empty($('oi'),'No matching contracts');
     return;
   }
-  const dates = view.frame.dates;
-  const map = new Map(view.frame.cells.map(cell => [cell.expiry+'|'+cell.strike,metricCell(cell,view.frame)]));
+  const cutoff=state.replayCursor??Date.now(),session=marketDate(cutoff);
+  const history=[...historyFor(view.frame.symbol),view.frame].filter(frame=>frame&&frame.sessionDate===session&&
+    Date.parse(frame.collectedAt)<=cutoff&&(!frame.optionLastAt||Date.parse(frame.optionLastAt)<=cutoff))
+    .sort((a,b)=>Date.parse(a.collectedAt)-Date.parse(b.collectedAt));
+  const dates=[...new Set([...(view.frame.availableDates??[]),...history.flatMap(frame=>frame.dates??[])])].filter(date=>date>=session).sort();
+  const latestByExpiry=new Map();
+  for(const frame of history)for(const expiry of frame.dates??[]){
+    if(frame.cells?.some(cell=>cell.expiry===expiry))latestByExpiry.set(expiry,frame);
+  }
+  const map=new Map();
+  for(const [expiry,frame] of latestByExpiry)for(const cell of frame.cells??[])if(cell.expiry===expiry)
+    map.set(expiry+'|'+cell.strike,{cell,value:metricCell(cell,frame)});
   const visible=view.strikes.flatMap(strike=>dates.map(expiry=>{
-    const value=net(map.get(expiry+'|'+strike));return {key:expiry+'|'+strike,value};
+    const value=net(map.get(expiry+'|'+strike)?.value);return {key:expiry+'|'+strike,value};
   })).filter(item=>finite(item.value));
   const positives=visible.filter(item=>item.value>0).sort((a,b)=>b.value-a.value||a.key.localeCompare(b.key));
   const negatives=visible.filter(item=>item.value<0).sort((a,b)=>a.value-b.value||a.key.localeCompare(b.key));
   const top=new Map([...positives.slice(0,3).map((item,i)=>[item.key,{sign:'positive',rank:i+1}]),
     ...negatives.slice(0,3).map((item,i)=>[item.key,{sign:'negative',rank:i+1}])]);
   const positiveMax=positives[0]?.value??0,negativeMax=Math.abs(negatives[0]?.value??0);
-  $('matrix-legend').title=`当前可见 ${view.strikes.length} 个 strike × ${dates.length} 个到期日；正负分别按可见峰值缩放。金色最正，紫色最负；边框标出各侧前三。`;
+  const loaded=dates.filter(date=>latestByExpiry.has(date));
+  $('matrix-expiry-status').textContent=`${loaded.length}/${dates.length} loaded · through ${dates.at(-1)??'—'}`;
+  $('matrix-legend').title=`OpenD 已列出 ${dates.length} 个到期日，最远 ${dates.at(-1)??'—'}；本地历史中已采集 ${loaded.length} 个期限。未采集期限选择顶部到期日后按需读取。Replay 仅显示游标前已采集的数据。`;
   const rankLabel=(item,i,sign)=>{
     const [expiry,strike]=item.key.split('|');
     const chip=element('span',`${sign}${i+1} ${expiry.slice(5)}/${strike}`,'matrix-rank '+(sign==='+'?'positive':'negative'));
@@ -486,11 +498,11 @@ function details(view) {
   };
   $('matrix-extremes').replaceChildren(...positives.slice(0,3).map((item,i)=>rankLabel(item,i,'+')),
     ...negatives.slice(0,3).map((item,i)=>rankLabel(item,i,'−')));
-  table($('matrix'),['Strike',...dates.map(date=>date.slice(5)+(view.dates.includes(date) ? ' •' : ''))],
+  table($('matrix'),['Strike',...dates.map(date=>date.slice(5)+(latestByExpiry.has(date)?' •':''))],
     view.strikes.map(strike => [{text:px(strike)},...dates.map(expiry => {
-      const key=expiry+'|'+strike,cell=map.get(key),value=cell ? net(cell) : null,highlight=top.get(key);
+      const key=expiry+'|'+strike,record=map.get(key),cell=record?.cell,value=record?net(record.value):null,highlight=top.get(key);
       return {text:cash(value),cls:highlight?`matrix-top-${highlight.sign}`:'',style:termPalette(value,positiveMax,negativeMax),
-        title:`${expiry} / ${strike} · Net ${cash(value)}${highlight?` · ${highlight.sign==='positive'?'最正':'最负'} GEX #${highlight.rank}（当前可见矩阵）`:''} · Call ${cash(cell?.call)} · Put ${cash(cell?.put)}`};
+        title:record?`${expiry} / ${strike} · Net ${cash(value)}${highlight?` · ${highlight.sign==='positive'?'最正':'最负'} GEX #${highlight.rank}（当前可见矩阵）`:''} · Call ${cash(cell?.call)} · Put ${cash(cell?.put)}`:`${expiry} / ${strike} · 尚无本地采集快照；选择该到期日后按需读取`};
     })]));
   table($('oi'),['Strike','Call OI','Put OI','Call–Put'],view.shown.map(row=>[
     {text:px(row.strike)},{text:count(row.callOi)},{text:count(row.putOi)},{text:count(row.oi),cls:tone(row.oi)}]));
@@ -519,8 +531,14 @@ function render(recenter = false) {
   const fixed=[['0dte','0DTE'],['front','Front'],['week','Next 7 days']];
   const days=[...new Set([...(frame?.availableDates??[]),...(frame?.dates??[])])].sort();
   if (!fixed.some(([key]) => key===state.expiry) && !days.includes(state.expiry)) days.push(state.expiry);
-  expiryMenu.replaceChildren(...[...fixed,...days.map(date=>[date,date])].map(([value,label])=>new Option(label,value)));
+  const options=[...fixed,...days.map(date=>[date,date])].map(([value,label])=>{
+    const option=new Option(label,value);
+    if(/^\d{4}-\d{2}-\d{2}$/.test(value))option.title=frame?.dates?.includes(value)?`${value} · 已采集`: `${value} · 已挂牌，选择后按需读取期权链与 GEX`;
+    return option;
+  });
+  expiryMenu.replaceChildren(...options);
   expiryMenu.value=state.expiry;
+  expiryMenu.title=`${days.length} 个 OpenD 到期日，最远 ${days.at(-1)??'—'}；未采集的日期可选中后按需加载`;
   expiryMenu._darkSelect?.sync();
   $('symbols').replaceChildren(...state.columns.map(column=>{const b=element('button',column.symbol);b.dataset.symbol=column.symbol;b.dataset.column=column.id;b.setAttribute('aria-pressed',column.id===state.focusId);return b;}));
   const ladders=state.columns.map(column=>{
