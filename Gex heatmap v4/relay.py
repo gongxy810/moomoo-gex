@@ -563,6 +563,8 @@ class OpenDFeed:
             except RuntimeError as error:
                 errors.append(str(error))
         detail = ' | '.join(errors)
+        if any(word in detail.lower() for word in ['timeout','timed out','超时']):
+            raise RuntimeError('OpenD 期权链请求超时；不能据此判定代码无效或没有期权 · '+detail)
         if any(word in detail.lower() for word in ['未知股票', 'unknown stock', 'invalid stock', '不存在']):
             raise ValueError('代码无法识别 · '+detail)
         if any(word in detail.lower() for word in ['权限', 'permission', 'entitlement']):

@@ -162,7 +162,16 @@ try{
   if(!live)await send('Page.addScriptToEvaluateOnNewDocument',{source:design?`Date.now=()=>${designData.at};`:"Date.now=()=>Date.parse('2026-11-09T18:01:00Z');"});
   await send('Page.navigate',{url:live?liveUrl:`http://127.0.0.1:${server.address().port}`});
   await until("document.querySelectorAll('.ladder').length===3 && document.querySelectorAll('#plot canvas').length>0 && ("+(live?"true":"document.querySelector('#feed-state').textContent!=='Refreshing'")+")");
-  if(v3Only){
+  if(process.argv.includes('--gex-audit')){
+    await evaluate("document.querySelector('#symbols button[data-symbol=SPY]').click()");
+    await until("Number(document.querySelector('#plot').dataset.nodeAuditCount)>0");
+    const result=await evaluate("(()=>{const p=document.querySelector('#plot'),left=document.querySelector('#trinity').getBoundingClientRect(),right=document.querySelector('.chart-panel').getBoundingClientRect();return {leftWidth:left.width,chartWidth:right.width,candles:Number(p.dataset.candles),nodes:Number(p.dataset.nodeAuditCount),audit:p.__gexNodeAudit.slice(0,3)}})()");
+    assert.ok(result.chartWidth>result.leftWidth);assert.ok(result.candles>0);assert.ok(result.nodes>0);
+    assert.deepEqual(exceptions,[]);
+    const shot=await send('Page.captureScreenshot',{format:'png'});await writeFile(resolve(artifacts,'gex-audit.png'),Buffer.from(shot.data,'base64'));
+    console.log(JSON.stringify({passed:true,fixture:!live,result,exceptions}));
+  }
+  else if(v3Only){
     await evaluate("document.querySelector('[data-ladder=middle] .symbol-picker').click()");
     await until("document.querySelectorAll('.symbol-list-head > span').length===4");
     assert.ok(await evaluate("document.querySelectorAll('.symbol-list-row').length>=11"));

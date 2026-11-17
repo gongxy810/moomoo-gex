@@ -21,6 +21,16 @@ def dt(s):
     return datetime.fromisoformat(s.replace('Z','+00:00')).astimezone(timezone.utc)
 
 class MarketTests(unittest.TestCase):
+    def test_chain_timeout_is_not_misreported_as_unknown_symbol(self):
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as folder:
+            feed=OpenDFeed(store=SnapshotStore(Path(folder)/'s.db'))
+            feed.ctx=SimpleNamespace(get_option_chain='chain')
+            with patch.object(feed,'records',side_effect=[RuntimeError('PacketErr.Timeout'),
+                    RuntimeError('未知股票 SPX'),RuntimeError('未知股票 SPXW')]):
+                with self.assertRaisesRegex(RuntimeError,'期权链请求超时'):
+                    feed.chain('SPXW','US..SPX','2026-11-17')
+
     def test_short_live_buffer_cannot_remove_previously_repaired_candles(self):
         from types import SimpleNamespace
         from datetime import timedelta
