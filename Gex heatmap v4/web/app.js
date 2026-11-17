@@ -460,6 +460,35 @@ function table(target, headings, rows) {
   t.append(head,body);target.replaceChildren(t);
 }
 
+const termColumns=new Map();
+let termBusy=false;
+function fillTermColumns(frame,dates,loaded){
+  if(termBusy||state.source!=='opend'||state.replayCursor!==null)return;
+  const symbol=frame.symbol,session=marketDate(Date.now()),generation=state.sourceGeneration;
+  const expiry=dates.find(date=>{
+    const cached=termColumns.get(`${symbol}|${session}|${date}`);
+    return (!loaded.has(date)||cached)&&(!cached||Date.now()-cached.fetchedAt>(cached.status==='error'?60000:300000));
+  });
+  if(!expiry)return;
+  termBusy=true;
+  const key=`${symbol}|${session}|${expiry}`;
+  (async()=>{
+    try{
+      for(let attempt=0;attempt<60;attempt++){
+        if(state.sourceGeneration!==generation||state.symbol!==symbol||state.replayCursor!==null)return;
+        const result=await requestJson('term',symbol,AbortSignal.timeout(15000),{expiry});
+        if(result.status!=='loading'){
+          if(result.status!=='ready')throw new Error(result.error??'Term snapshot unavailable');
+          termColumns.set(key,{...result,fetchedAt:Date.now()});return;
+        }
+        await new Promise(resolve=>setTimeout(resolve,1000));
+      }
+      throw new Error('Term snapshot still loading; retrying shortly');
+    }catch(error){termColumns.set(key,{status:'error',error:error.message,fetchedAt:Date.now()});}
+    finally{termBusy=false;scheduleRender();}
+  })();
+}
+
 function details(view) {
   profile(view);
   if (!view.shown.length) {
@@ -479,6 +508,14 @@ function details(view) {
   for(const frame of history)for(const expiry of frame.dates??[]){
     if(frame.cells?.some(cell=>cell.expiry===expiry))latestByExpiry.set(expiry,frame);
   }
+  if(state.replayCursor===null&&state.source==='opend'){
+    for(const expiry of dates){
+      const column=termColumns.get(`${view.frame.symbol}|${session}|${expiry}`);
+      const previous=latestByExpiry.get(expiry);
+      if(column?.status==='ready'&&(!previous||Date.parse(column.collectedAt)>Date.parse(previous.collectedAt)))latestByExpiry.set(expiry,column);
+    }
+    fillTermColumns(view.frame,dates,new Set(latestByExpiry.keys()));
+  }
   const map=new Map();
   for(const [expiry,frame] of latestByExpiry)for(const cell of frame.cells??[])if(cell.expiry===expiry)
     map.set(expiry+'|'+cell.strike,{cell,value:metricCell(cell,frame)});
@@ -492,7 +529,7 @@ function details(view) {
   const positiveMax=positives[0]?.value??0,negativeMax=Math.abs(negatives[0]?.value??0);
   const loaded=dates.filter(date=>latestByExpiry.has(date));
   $('matrix-expiry-status').textContent=`${loaded.length}/${dates.length} loaded · through ${dates.at(-1)??'—'}`;
-  $('matrix-legend').title=`OpenD 已列出 ${dates.length} 个到期日，最远 ${dates.at(-1)??'—'}；本地历史中已采集 ${loaded.length} 个期限。未采集期限选择顶部到期日后按需读取。Replay 仅显示游标前已采集的数据。`;
+  $('matrix-legend').title=`OpenD 已列出 ${dates.length} 个到期日，最远 ${dates.at(-1)??'—'}；已加载 ${loaded.length} 个期限。实时模式自动逐列补全，远期列每五分钟更新；各列采集时间可能不同。Replay 仅显示已保存的历史数据。`;
   const rankLabel=(item,i,sign)=>{
     const [expiry,strike]=item.key.split('|');
     const chip=element('span',`${sign}${i+1} ${expiry.slice(5)}/${strike}`,'matrix-rank '+(sign==='+'?'positive':'negative'));
@@ -505,7 +542,8 @@ function details(view) {
     view.strikes.map(strike => [{text:px(strike)},...dates.map(expiry => {
       const key=expiry+'|'+strike,record=map.get(key),cell=record?.cell,value=record?net(record.value):null,highlight=top.get(key);
       return {text:cash(value),cls:highlight?`matrix-top-${highlight.sign}`:'',style:termPalette(value,positiveMax,negativeMax),
-        title:record?`${expiry} / ${strike} · Net ${cash(value)}${highlight?` · ${highlight.sign==='positive'?'最正':'最负'} GEX #${highlight.rank}（当前可见矩阵）`:''} · Call ${cash(cell?.call)} · Put ${cash(cell?.put)}`:`${expiry} / ${strike} · 尚无本地采集快照；选择该到期日后按需读取`};
+        title:record?`${expiry} / ${strike} · Net ${cash(value)}${highlight?` · ${highlight.sign==='positive'?'最正':'最负'} GEX #${highlight.rank}（当前可见矩阵）`:''} · Call ${cash(cell?.call)} · Put ${cash(cell?.put)} · 采集 ${latestByExpiry.get(expiry)?.collectedAt}`:
+          `${expiry} / ${strike} · ${termColumns.get(`${view.frame.symbol}|${session}|${expiry}`)?.error??(latestByExpiry.has(expiry)?'该行权价未挂牌或缺少有效报价':'等待自动读取该到期日')}`};
     })]));
   table($('oi'),['Strike','Call OI','Put OI','Call–Put'],view.shown.map(row=>[
     {text:px(row.strike)},{text:count(row.callOi)},{text:count(row.putOi)},{text:count(row.oi),cls:tone(row.oi)}]));

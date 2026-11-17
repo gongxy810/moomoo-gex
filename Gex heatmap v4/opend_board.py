@@ -111,6 +111,12 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
                     symbol, _ = symbol_code(parse_qs(path.query).get('symbol', [''])[0])
                     started=monotonic()
                     print(json.dumps({'event':'request-start','path':path.path,'symbol':symbol}),flush=True)
+                    if path.path == '/api/term':
+                        expiry=parse_qs(path.query).get('expiry',[''])[0]
+                        date.fromisoformat(expiry)
+                        if expiry<datetime.now(ZoneInfo('America/New_York')).date().isoformat():
+                            raise ValueError('Term capture requires a current or future expiry')
+                        return self.json_response(manager.request_term(symbol,expiry))
                     if path.path == '/api/watchlist':
                         quotes={}
                         with closing(feed.store.connect()) as db:

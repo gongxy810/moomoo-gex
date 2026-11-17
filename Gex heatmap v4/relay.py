@@ -688,12 +688,58 @@ class SnapshotManager:
         self.stream_versions={}
         self.visible={}
         self.price_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-price')
+        self.term_pool=ThreadPoolExecutor(max_workers=1,thread_name_prefix='gex-term')
+        self.term_feed=None;self.term_jobs={};self.term_cache={};self.term_chains={}
         self.always=set(watched) if os.environ.get('GEX_CLOUD')=='1' else set()
         self.watched={symbol:monotonic() for symbol in watched}
         self.closed=False
         self.timer=Thread(target=self._poll,name='gex-scheduler',daemon=True);self.timer.start()
         for symbol in watched:self.request_price(symbol,observe=False)
         for symbol in watched:self.request(symbol,observe=False)
+
+    def request_term(self,symbol,expiry):
+        key=(symbol,expiry)
+        with self.lock:
+            cached=self.term_cache.get(key)
+            if cached and monotonic()-cached[0]<300:return cached[1]
+            job=self.term_jobs.get(key)
+            if job and job.done():
+                try:result=job.result()
+                except Exception as error:result={'symbol':symbol,'expiry':expiry,'status':'error','error':str(error)}
+                self.term_cache[key]=(monotonic(),result);del self.term_jobs[key]
+                return result
+            if job is None:
+                if sum(not j.done() for j in self.term_jobs.values())>=4:
+                    return {'symbol':symbol,'expiry':expiry,'status':'loading'}
+                self.term_jobs[key]=self.term_pool.submit(self._collect_term,symbol,expiry)
+            return {'symbol':symbol,'expiry':expiry,'status':'loading'}
+
+    def _collect_term(self,symbol,expiry):
+        # A separate connection and worker keep long-dated chains off the live
+        # capture lock. Partial term columns never replace the main snapshot.
+        if self.term_feed is None:self.term_feed=OpenDFeed(self.feed.port,self.feed.store,price_only=True)
+        feed=self.term_feed;feed.connect();_,code=symbol_code(symbol)
+        cached=self.term_chains.get((symbol,expiry))
+        if cached and monotonic()-cached[0]<3600:contracts=cached[1]
+        else:
+            rows=feed.records(feed.ctx.get_option_chain,code,start=expiry,end=expiry)
+            contracts=contracts_from_chain(symbol,rows)
+            if not contracts:raise RuntimeError('OpenD returned no contracts for '+expiry)
+            self.term_chains[(symbol,expiry)]=(monotonic(),contracts)
+        with self.lock:frame=self.latest.get(symbol)
+        spot=(frame or {}).get('spot') or {}
+        value=positive(spot.get('value'))
+        if not value:raise RuntimeError('No observed price for '+symbol)
+        strikes=sorted({spec[1] for spec in contracts.values()})
+        near=set(sorted(strikes,key=lambda k:abs(k-value))[:120])
+        chosen={c:spec for c,spec in contracts.items() if spec[1] in near}
+        rows=feed.snapshots(list(chosen))
+        cells,first,last,usable=summarize(chosen,rows,value)
+        if not usable:raise RuntimeError('No usable option snapshots for '+expiry)
+        return {'symbol':symbol,'expiry':expiry,'status':'ready','dates':[expiry],
+                'sessionDate':datetime.now(ET).date().isoformat(),'collectedAt':iso(datetime.now(timezone.utc)),
+                'optionFirstAt':first,'optionLastAt':last,'spot':spot,'cells':cells,
+                'listedStrikes':{expiry:strikes},'contracts':len(chosen),'usable':usable}
 
     def _poll(self):
         while not self.closed:
@@ -838,4 +884,6 @@ class SnapshotManager:
         return frame,status
 
     def close(self):
+        self.term_pool.shutdown(wait=True,cancel_futures=True)
+        if self.term_feed and self.term_feed.ctx:self.term_feed.ctx.close()
         self.closed=True;self.timer.join();self.pool.shutdown(wait=True,cancel_futures=True);self.priority_pool.shutdown(wait=True,cancel_futures=True);self.price_pool.shutdown(wait=True,cancel_futures=True)
