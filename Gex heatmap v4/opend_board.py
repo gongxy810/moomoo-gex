@@ -236,6 +236,14 @@ def handler(feed, origin, web_port=WEB_PORT, manager=None):
     return Handler
 
 
+class BoardHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        if os.name == 'nt':
+            self.allow_reuse_address=False
+            self.socket.setsockopt(socket.SOL_SOCKET,socket.SO_EXCLUSIVEADDRUSE,1)
+        super().server_bind()
+
+
 def main():
     if hasattr(signal,'SIGUSR1'):
         faulthandler.register(signal.SIGUSR1, all_threads=True)
@@ -252,7 +260,7 @@ def main():
     # Bind before starting any collector threads. A second launch must exit
     # cleanly instead of leaving collectors alive after a port-in-use error.
     try:
-        server=ThreadingHTTPServer((LOOPBACK, args.web_port), SimpleHTTPRequestHandler)
+        server=BoardHTTPServer((LOOPBACK, args.web_port), SimpleHTTPRequestHandler)
     except OSError as error:
         parser.exit(1, f'Cannot start board on {LOOPBACK}:{args.web_port}: {error}\n'
                     'Close the existing board command window before starting the updated version.\n')
