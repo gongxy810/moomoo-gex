@@ -9,6 +9,18 @@ from strike_history import hover_payload
 def ms(time):return int(datetime.fromisoformat('2026-11-12T'+time+'-05:00').timestamp()*1000)
 
 class StrikeHistoryTests(unittest.TestCase):
+    def test_vex_index_respects_cutoff_and_requires_all_expiries(self):
+        with TemporaryDirectory() as temp:
+            store=SnapshotStore(Path(temp)/'s.db')
+            frame={'symbol':'SPY','sessionDate':'2026-11-12','collectedAt':'2026-11-12T15:00:00+00:00',
+                'optionLastAt':'2026-11-12T15:00:01+00:00','spot':{'value':750},'sessionClose':'2026-11-12T21:00:00+00:00',
+                'usable':2,'cells':[{'expiry':'2026-11-12','strike':750,'call':100,'put':-50,'callIv':.2,'putIv':.2,'complete':True}]}
+            store.save(frame)
+            args=('SPY',['2026-11-12'],750,'2026-11-12')
+            self.assertIsNone(store.strike_history(*args,'2026-11-12T15:00:00+00:00',metric='VEX')['net_gex'])
+            self.assertIsNotNone(store.strike_history(*args,'2026-11-12T15:00:02+00:00',metric='VEX')['net_gex'])
+            self.assertIsNone(store.strike_history('SPY',['2026-11-12','2026-11-13'],750,'2026-11-12','2026-11-12T15:00:02+00:00',metric='VEX')['net_gex'])
+
     def test_signed_change_open_fallback_and_tolerance(self):
         data=hover_payload('SPY',['2026-11-12'],750,'2026-11-12',ms('10:20:00'),
             [(ms('09:30:00'),1e9),(ms('10:00:00'),-2e9),(ms('10:20:00'),-6e9)])
