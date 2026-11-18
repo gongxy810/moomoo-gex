@@ -288,7 +288,7 @@ function renderChart(view) {
   $('cone').setAttribute('aria-pressed',state.cone);$('derived').setAttribute('aria-pressed',state.derived);
   for(const [id,key] of [['nodes','nodes'],['walls','walls'],['day-range','dayRange'],['two-sigma','twoSigma']])$(id).checked=!!state[key];
   const payload=state.source==='opend'?state.tempest[state.symbol]?.payload:null;
-  const result=state.expectedProvider==='Tempest'?tempestExpected(payload,{symbol:state.symbol,at,horizon:state.expectedHorizon,spot,spotAsOf:spot?.at,sessionDate:frame?.sessionDate}):openDExpected(frame,{at,horizon:state.expectedHorizon});
+  const result=state.expectedProvider==='Tempest'?tempestExpected(payload,{symbol:state.symbol,at,horizon:state.expectedHorizon,spot,spotAsOf:spot?.at,sessionDate:frame?.sessionDate}):openDExpected(frame,{at,horizon:state.expectedHorizon,allowEstimatedSpot:state.symbol==='SPXW'});
   const candidate=result.available?result:null;
   state.coneReason=candidate?null:result.reason;
   const pinForFrame=state.pinned?.symbol===state.symbol&&state.pinned.source===state.source&&state.pinned.replay===replay&&state.pinned.cone.provider===(state.source==='demo'?'Synthetic':state.expectedProvider)&&state.pinned.cone.horizon===state.expectedHorizon&&state.pinned.cone.at<=at&&state.pinned.cone.sessionDate===marketDate(at);

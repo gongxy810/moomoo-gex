@@ -34,6 +34,17 @@ test('paired vendor IV uses percent normalization and verified calendar settleme
   assert.equal(openDExpected(fixture(),{at,settleAt:'2026-11-09T20:00:00Z'}).available,false);
 });
 
+test('SPXW parity cone requires explicit opt-in and fresh price and IV',()=>{
+  const f=fixture('SPXW');Object.assign(f.spot,{current:false,estimated:true,status:'REF',source:'SPXW call/put mids · K+C−P (rate omitted)'});
+  assert.equal(openDExpected(f,{at}).available,false);
+  const cone=openDExpected(f,{at,allowEstimatedSpot:true});
+  assert.equal(cone.available,true);assert.equal(cone.estimatedSpot,true);
+  assert.equal(cone.quality,'Estimated SPX price');assert.ok(cone.modelVersion.includes('parity'));
+  assert.equal(cone.move,impliedWidth(100,.2,3/(365*24)));
+  f.spot.at=new Date(at-120001).toISOString();assert.equal(openDExpected(f,{at,allowEstimatedSpot:true}).available,false);
+  f.spot.at=new Date(at+1).toISOString();assert.equal(openDExpected(f,{at,allowEstimatedSpot:true}).available,false);
+});
+
 test('missing, stale, future, crossed and wrong-root quotes cannot manufacture a cone',()=>{
   for(const mutate of [f=>f.spot.current=false,f=>f.spot.value=Infinity,f=>f.spot.estimated=true,f=>f.spot.at='bad',f=>f.collectedAt=new Date(at+1).toISOString(),
     f=>f.cells.forEach(c=>['call','put'].forEach(s=>c[s+'Quote'].at=new Date(at-120001).toISOString())),
