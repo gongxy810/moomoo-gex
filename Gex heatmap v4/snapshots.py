@@ -37,6 +37,7 @@ class SnapshotStore:
             db.execute('CREATE TABLE IF NOT EXISTS strike_indexed_captures (symbol TEXT, at TEXT, PRIMARY KEY(symbol,at))')
             db.execute('CREATE TABLE IF NOT EXISTS vex_samples (symbol TEXT, day TEXT, expiry TEXT, strike REAL, at INTEGER, net REAL, PRIMARY KEY(symbol,expiry,strike,at))')
             db.execute('CREATE INDEX IF NOT EXISTS vex_samples_lookup ON vex_samples(symbol,day,strike,expiry,at)')
+            db.execute('CREATE INDEX IF NOT EXISTS vex_samples_retention ON vex_samples(at)')
             db.execute('CREATE TABLE IF NOT EXISTS vex_indexed_captures (symbol TEXT, at TEXT, PRIMARY KEY(symbol,at))')
             db.execute("CREATE INDEX IF NOT EXISTS captures_day_idx ON captures(symbol,json_extract(frame,'$.sessionDate'),at)")
 
@@ -122,6 +123,7 @@ class SnapshotStore:
         for table in ('captures','price_bars'):
             db.execute(f'DELETE FROM {table} WHERE at < ?',(cutoff,))
         db.execute('DELETE FROM strike_samples WHERE at < ?',(int((datetime.now(timezone.utc)-timedelta(days=10)).timestamp()*1000),))
+        db.execute('DELETE FROM vex_samples WHERE at < ?',(int((datetime.now(timezone.utc)-timedelta(days=10)).timestamp()*1000),))
         self.last_cleanup=now
 
     def zero_gamma(self,symbol,expiries,asof,capture=None):
