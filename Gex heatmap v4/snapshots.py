@@ -35,6 +35,9 @@ class SnapshotStore:
             db.execute('CREATE INDEX IF NOT EXISTS strike_samples_retention ON strike_samples(at)')
             db.execute('CREATE TABLE IF NOT EXISTS strike_backfill (symbol TEXT, day TEXT, through TEXT, PRIMARY KEY(symbol,day))')
             db.execute('CREATE TABLE IF NOT EXISTS strike_indexed_captures (symbol TEXT, at TEXT, PRIMARY KEY(symbol,at))')
+            db.execute('CREATE TABLE IF NOT EXISTS vex_samples (symbol TEXT, day TEXT, expiry TEXT, strike REAL, at INTEGER, net REAL, PRIMARY KEY(symbol,expiry,strike,at))')
+            db.execute('CREATE INDEX IF NOT EXISTS vex_samples_lookup ON vex_samples(symbol,day,strike,expiry,at)')
+            db.execute('CREATE TABLE IF NOT EXISTS vex_indexed_captures (symbol TEXT, at TEXT, PRIMARY KEY(symbol,at))')
             db.execute("CREATE INDEX IF NOT EXISTS captures_day_idx ON captures(symbol,json_extract(frame,'$.sessionDate'),at)")
 
     def index_strikes(self, db, frame):
@@ -50,6 +53,18 @@ class SnapshotStore:
         db.executemany('INSERT OR IGNORE INTO strike_samples VALUES (?,?,?,?,?,?)',rows)
         db.execute('INSERT OR IGNORE INTO strike_indexed_captures VALUES (?,?)',(frame['symbol'],frame['collectedAt']))
 
+    def index_vex(self,db,frame):
+        if db.execute('SELECT 1 FROM vex_indexed_captures WHERE symbol=? AND at=?',(frame['symbol'],frame['collectedAt'])).fetchone():return
+        at=max(int(datetime.fromisoformat(frame[k].replace('Z','+00:00')).timestamp()*1000)
+               for k in ('collectedAt','optionLastAt') if frame.get(k))
+        rows=[]
+        for cell in frame.get('cells',[]):
+            value=vex_cell(cell,frame)
+            if value['complete']:
+                rows.append((frame['symbol'],frame['sessionDate'],cell['expiry'],cell['strike'],at,value['call']+value['put']))
+        db.executemany('INSERT OR IGNORE INTO vex_samples VALUES (?,?,?,?,?,?)',rows)
+        db.execute('INSERT OR IGNORE INTO vex_indexed_captures VALUES (?,?)',(frame['symbol'],frame['collectedAt']))
+
     def strike_history(self,symbol,expiries,strike,day,asof,metric='GEX'):
         expiries=sorted(set(expiries))
         if not expiries or len(expiries)>12 or not isfinite(strike) or strike<=0:raise ValueError('Invalid strike or expiry selection')
@@ -59,15 +74,14 @@ class SnapshotStore:
         limit=int(cutoff.timestamp()*1000)
         if metric not in ('GEX','VEX'):raise ValueError('Invalid exposure metric')
         if metric=='VEX':
-            observations=[]
-            with closing(self.connect()) as db:
-                archived=db.execute("SELECT frame FROM captures WHERE symbol=? AND json_extract(frame,'$.sessionDate')=? AND julianday(at)<=julianday(?) ORDER BY at",(symbol,day,asof))
-                for record, in archived:
-                    frame=json.loads(record);quoted=frame.get('optionLastAt') or frame['collectedAt']
-                    t=int(datetime.fromisoformat(quoted.replace('Z','+00:00')).timestamp()*1000)
-                    if t>limit:continue
-                    cells=[vex_cell(c,frame) for c in frame.get('cells',[]) if c['strike']==strike and c['expiry'] in expiries]
-                    if cells and all(c['complete'] for c in cells):observations.append((max(t,int(datetime.fromisoformat(frame['collectedAt'].replace('Z','+00:00')).timestamp()*1000)),sum(c['call']+c['put'] for c in cells)))
+            with self.lock,closing(self.connect()) as db,db:
+                archived=db.execute("SELECT frame FROM captures WHERE symbol=? AND json_extract(frame,'$.sessionDate')=? AND NOT EXISTS(SELECT 1 FROM vex_indexed_captures i WHERE i.symbol=captures.symbol AND i.at=captures.at)",(symbol,day))
+                for record, in archived:self.index_vex(db,json.loads(record))
+                placeholders=','.join('?' for _ in expiries)
+                observations=db.execute(f'''SELECT at,SUM(net) FROM vex_samples
+                    WHERE symbol=? AND day=? AND strike=? AND expiry IN ({placeholders}) AND at<=?
+                    GROUP BY at HAVING COUNT(DISTINCT expiry)=? ORDER BY at''',
+                    [symbol,day,strike,*expiries,limit,len(expiries)]).fetchall()
             payload=hover_payload(symbol,expiries,strike,day,limit,observations)
             payload.update(metric='VEX',quality='Estimated signed OI VEX / 1 volatility point, r=q=0, ACT/365')
             return payload
@@ -139,6 +153,7 @@ class SnapshotStore:
             db.execute('INSERT OR IGNORE INTO captures VALUES (?,?,?)',
                        (frame['symbol'], frame['collectedAt'], json.dumps(compact, allow_nan=False)))
             self.index_strikes(db,frame)
+            self.index_vex(db,frame)
             if frame['symbol']=='SPXW':
                 self.basis_day(db,frame['sessionDate'])
                 row=db.execute('SELECT anchor FROM spx_basis_anchors WHERE at=?',(frame['collectedAt'],)).fetchone()

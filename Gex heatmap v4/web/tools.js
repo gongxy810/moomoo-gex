@@ -98,7 +98,7 @@ export class DarkSelect{
 export class StrikeHoverCard{
   constructor({target,load}){
     if(!target?.getBoundingClientRect)return;
-    Object.assign(this,{target,load,cache:new Map(),version:0});
+    Object.assign(this,{target,load,cache:new Map(),pending:new Map(),version:0});
     this.card=node('aside','','strike-hover-card');this.card.hidden=true;this.card.setAttribute('role','tooltip');this.card.id='strike-hover-card';document.body.append(this.card);
     target.addEventListener('mouseover',event=>{const row=event.target.closest?.('.strike-row');if(row?.__gexHover){this.x=event.clientX;this.y=event.clientY;this.show(row);}});
     target.addEventListener('mousemove',event=>{this.x=event.clientX;this.y=event.clientY;const row=event.target.closest?.('.strike-row');if(row?.__gexHover&&(this.card.hidden||this.row!==row))this.show(row);if(!this.card.hidden)this.position();});
@@ -117,13 +117,13 @@ export class StrikeHoverCard{
     this.card.style.top=Math.max(8,Math.min(this.y+16,innerHeight-height-8))+'px';
   }
   show(row){
-    const spec=row.__gexHover,key=JSON.stringify(spec);
+    const spec=row.__gexHover,key=JSON.stringify([spec.source,spec.symbol,spec.metric??'GEX',spec.strike,[...spec.expiries].sort(),spec.date,spec.asof]);
     if(this.row===row&&this.key===key)return;
     this.hovering=true;this.row=row;this.spec=spec;this.key=key;const version=++this.version;clearTimeout(this.timer);this.card.hidden=false;
     const cached=this.cache.get(key);
     if(cached){this.paint(cached);return;}
     this.paint({net_gex:spec.net_gex,sparkline_points:[],loading:true});
-    this.timer=setTimeout(async()=>{try{const result=await this.load(spec);this.cache.set(key,result);if(this.cache.size>80)this.cache.delete(this.cache.keys().next().value);if(this.version===version&&!this.card.hidden)this.paint(result);}
+    this.timer=setTimeout(async()=>{try{let task=this.pending.get(key);if(!task){task=Promise.resolve().then(()=>this.load(spec)).finally(()=>this.pending.delete(key));this.pending.set(key,task);}const result=await task;this.cache.set(key,result);if(this.cache.size>80)this.cache.delete(this.cache.keys().next().value);if(this.version===version&&!this.card.hidden)this.paint(result);}
       catch(error){if(this.version===version&&!this.card.hidden)this.paint({net_gex:spec.net_gex,sparkline_points:[],reason:error.message});}},100);
   }
   paint(data){
