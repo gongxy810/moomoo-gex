@@ -13,7 +13,7 @@
   <div class="brand"><span class="brand-mark" aria-hidden="true">ϟ</span><span>OpenD <strong>GEX</strong></span></div>
   <span class="quiet top-label">MARKET STRUCTURE</span>
   <div class="spacer"></div>
-  <label class="compute-mode">Compute <select id="compute-mode" aria-label="GEX calculation location"><option value="cloud" selected>Cloud</option><option value="local">Local</option></select></label>
+  <label class="compute-mode">Compute <select id="compute-mode" aria-label="GEX calculation location"><option value="cloud">Cloud</option><option value="local" selected>Local</option></select></label>
   <span id="feed-state" class="pill warn" role="status">Connecting</span>
   <button id="connect" type="button">Data source</button>
 </header>
@@ -48,7 +48,7 @@
 <section id="metrics" class="metrics" aria-label="Exposure summary"></section>
 <section class="detail" aria-label="Selected symbol detail">
   <article class="panel"><div class="panel-head"><div><small>01 / DISTRIBUTION</small><h2>Strike profile</h2></div><span class="quiet">Net GEX / USD</span></div><div id="profile"></div></article>
-  <article class="panel wide"><div class="panel-head"><div><small>02 / TERM STRUCTURE</small><h2>GEX by expiration</h2></div><span id="matrix-legend" class="matrix-legend"><span><i class="positive"></i>最正 +GEX</span><span><i class="negative"></i>最负 −GEX</span><span>边框 = 各侧 Top 3</span></span></div><div id="matrix-extremes" class="matrix-extremes"></div><div id="matrix"></div></article>
+  <article class="panel wide"><div class="panel-head"><div><small>02 / TERM STRUCTURE</small><h2>GEX by expiration</h2></div><span id="matrix-legend" class="matrix-legend"><span><i class="positive"></i>最正 +GEX</span><span><i class="negative"></i>最负 −GEX</span><span>边框 = 各侧 Top 3</span><span id="matrix-expiry-status"></span></span></div><div id="matrix-extremes" class="matrix-extremes"></div><div id="matrix"></div></article>
   <article class="panel"><div class="panel-head"><div><small>03 / OPEN INTEREST</small><h2>Call–Put OI</h2></div><span class="quiet">Contracts</span></div><div id="oi"></div></article>
 </section>
 <footer id="freshness" class="freshness"></footer>

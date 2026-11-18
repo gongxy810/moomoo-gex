@@ -22,15 +22,17 @@ function usableQuote(q,side,frame,strike,expiry,at,policy){
   return {quote:{...q,mid,ageMs:age},reason:null};
 }
 
-export function openDExpected(frame,{at=Date.now(),horizon='today',expiry,settleAt,spotMaxAge=120000,ivMaxAge=120000,maxSpreadRatio=.35}={}){
+export function openDExpected(frame,{at=Date.now(),horizon='today',expiry,settleAt,spotMaxAge=120000,ivMaxAge=120000,maxSpreadRatio=.35,allowEstimatedSpot=false}={}){
   const symbol=frame?.symbol,spot=frame?.spot;
+  const estimatedSpot=allowEstimatedSpot&&symbol==='SPXW'&&spot?.estimated===true&&
+    spot.status==='REF'&&spot.source?.startsWith('SPXW call/put mids');
   const meta={provider:frame?.source==='demo'?'Synthetic':'OpenD',symbol:symbol==='SPXW'?'SPX':symbol,optionRoot:frame?.optionRoot??(symbol?rootFor(frame):null),asOf:iso(at),horizon,modelVersion:MODEL_VERSION};
   if(!frame||!symbol||!finite(at))return unavailable('Expected Move unavailable：没有行情快照或有效时点',meta);
   if(ms(frame.captureAt??frame.collectedAt)>at)return unavailable('Expected Move unavailable：快照晚于游标',meta);
   if(!rootMatches(frame,meta.optionRoot))return unavailable('Expected Move unavailable：价格标的与期权根不匹配',meta);
-  if(!spot?.current||spot.estimated||spot.status==='REF'||!finite(spot.value)||!(spot.value>0)||!finite(ms(spot.at))||at-ms(spot.at)<0||at-ms(spot.at)>spotMaxAge)
-    return unavailable(symbol==='SPXW'?'SPX unavailable：需要真实、有效的 SPX Spot，参考价不能生成现金指数边界':'Expected Move stale / unavailable：缺少新鲜有效 Spot',meta);
-  const sessions={...frame.price?.sessions,...frame.sessions};
+  if((!estimatedSpot&&(!spot?.current||spot.estimated||spot.status==='REF'))||!finite(spot?.value)||!(spot.value>0)||!finite(ms(spot.at))||at-ms(spot.at)<0||at-ms(spot.at)>spotMaxAge)
+    return unavailable(symbol==='SPXW'?(allowEstimatedSpot?'SPX estimate unavailable：缺少有效 SPX 价格或两分钟内的 SPXW 推算价':'SPX unavailable：需要真实、有效的 SPX Spot，参考价不能生成现金指数边界'):'Expected Move stale / unavailable：缺少新鲜有效 Spot',meta);
+  const sessions={...frame.price?.sessions,...frame.sessions,...frame.expiryCloses};
   if(frame.sessionDate&&frame.sessionClose)sessions[frame.sessionDate]=frame.sessionClose;
   const today=marketDate(at),dates=[...(frame.dates??[])].sort();
   if(horizon==='today')expiry=today;
@@ -54,7 +56,9 @@ export function openDExpected(frame,{at=Date.now(),horizon='today',expiry,settle
   if(!chosen)return unavailable('Expected Move unavailable：ATM bid/ask、IV 或报价时间缺失 / 过旧 / 价差过宽',{...meta,expiry,settleAt:iso(end),rejected});
   const iv=chosen.quotes.reduce((total,q)=>total+q.iv,0)/chosen.quotes.length;
   const yearFraction=(end-at)/YEAR,move=impliedWidth(spot.value,iv,yearFraction);
-  const cone={...meta,available:true,quality:chosen.quotes.length===2?'Estimated':'Approximate',qualityReasons:chosen.reasons,
+  const cone={...meta,modelVersion:estimatedSpot?MODEL_VERSION+'-spx-parity-estimate-v1':MODEL_VERSION,
+    available:true,estimatedSpot,quality:estimatedSpot?'Estimated SPX price':chosen.quotes.length===2?'Estimated':'Approximate',
+    qualityReasons:[...chosen.reasons,...(estimatedSpot?['SPXW call/put parity reference; not observed SPX cash; rates omitted']:[])],
     spot:spot.value,spotAsOf:spot.at,spotSource:spot.source??spot.label,sessionDate:today,expiry,settleAt:iso(end),iv,
     ivSource:'OpenD option_implied_volatility: vendor percent / 100',ivAsOf:iso(Math.min(...chosen.quotes.map(q=>ms(q.at)))),
     ivTimestampKind:'OpenD market-snapshot update_time; IV has no independent timestamp',

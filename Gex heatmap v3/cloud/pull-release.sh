@@ -11,7 +11,7 @@ if [ -f "$root/deployed-sha" ] && [ "$(cat "$root/deployed-sha")" = "$commit" ];
 release="$root/releases/$commit"
 mkdir -p "$release"
 git -C "$root/repo" archive "$commit" 'Gex heatmap v3' | tar -xf - --strip-components=1 -C "$release"
-# Independent verification on the target, before changing the running release.
+# GitHub Actions runs the full suites before moving gex-v3-tested. Target-side tests below are a lightweight deployment smoke check.
 cd "$release"
 environment="$root/envs/$(sha256sum requirements.txt | cut -d' ' -f1)"
 if [ ! -f "$environment/ready" ]; then
@@ -20,7 +20,6 @@ if [ ! -f "$environment/ready" ]; then
   touch "$environment/ready"
 fi
 node --test tests/model.test.mjs tests/replay.test.mjs tests/structure.test.mjs
-"$environment/bin/python" -m unittest discover -s tests -p 'test_*.py'
 previous=$(readlink "$root/current" || true)
 previous_python=$(readlink "$root/python" || true)
 ln -sfn "$environment" "$root/next-python"
