@@ -349,7 +349,7 @@ function renderChart(view) {
     levels.push({price:zero.price,color:'#f3f3f6',label:activeMetric==='VEX'?'GEX Zero Gamma':'Zero Gamma',style:WALL_KING_LINE_STYLE,
       detail:`Estimated Volume Zero Gamma · ${zero.model} · 0DTE ${zero.expiries?.join(', ')} · OpenD Gamma × session Volume · calls + / puts − · ${zero.contracts} captured contracts · linear interpolation · nearest reference ${px(zero.price_reference)} (${zero.price_reference_kind}) · bracket ${zero.selected?.lower.strike} / ${zero.selected?.upper.strike} · ${zero.asof}${proxy?.available?' · SPX proxy axis':''}`});
   }
-  $('zero-gamma-status').textContent=zero.available?'╍ Zero Gamma · 0DTE Volume (linear)':zero.loading?'╍ Zero Gamma …':'╍ Zero Gamma —';
+  $('zero-gamma-status').textContent=zero.available?'╍ Zero Gamma · 0DTE Volume (linear)':zero.loading?'╍ Zero Gamma …':`╍ Zero Gamma — ${zero.reason??'数据不足'}`;
   $('zero-gamma-status').title=zero.available?`${zero.definition} · ${JSON.stringify(zero.assumptions)}`:zero.reason;
   $('chart-title').textContent=$('chart-title').textContent.replace('SPXW GEX','SPXW '+activeMetric);
   $('plot').dataset.zeroGamma=JSON.stringify(zero);
