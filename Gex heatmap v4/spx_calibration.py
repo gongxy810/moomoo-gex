@@ -14,7 +14,7 @@ def parse(value):
     except (ValueError, TypeError, AttributeError):
         return None
 
-def calibration_reference(cells, received, closes=None, rate=.043):
+def calibration_reference(cells, received, closes=None, rate=.043, max_spread=.40):
     now = parse(received)
     unavailable = {'available':False, 'model':MODEL, 'reason':'No fresh next-expiry ATM call/put pairs with spread <= 0.40'}
     if now is None:
@@ -31,7 +31,7 @@ def calibration_reference(cells, received, closes=None, rate=.043):
             bid, ask, at = q.get('bid'), q.get('ask'), parse(q.get('at'))
             if q.get('optionRoot') != 'SPXW' or not all(isinstance(v, (float, int)) and isfinite(v) for v in (bid, ask)):
                 break
-            if bid <= 0 or ask < bid or ask-bid > .400001 or at is None or not -3 <= (now-at).total_seconds() <= 90:
+            if bid <= 0 or ask < bid or ask-bid > max_spread+.000001 or (ask-bid)/((ask+bid)/2)>.10 or at is None or not -3 <= (now-at).total_seconds() <= 90:
                 break
             sides.append(((bid+ask)/2, at, ask-bid))
         if len(sides) != 2 or abs((sides[0][1]-sides[1][1]).total_seconds()) > 30:
@@ -52,7 +52,11 @@ def calibration_reference(cells, received, closes=None, rate=.043):
                 'at':min(p[3] for p in pairs).isoformat(), 'receivedAt':received,
                 'expiry':expiry,'pairs':len(pairs),'strikes':[p[1] for p in pairs],
                 'rate':rate,'annualization':'ACT/365','quality':'Estimated option-implied forward; not cash SPX',
-                'source':'SPXW next-expiry ATM call/put mids', 'maxSpread':.40}
+                'source':'SPXW next-expiry ATM call/put mids', 'maxSpread':max_spread}
+    if max_spread==.40:
+        fallback=calibration_reference(cells,received,closes,rate,max_spread=1.0)
+        if fallback.get('available'):
+            return {**fallback,'quality':'Estimated option-implied forward; wider spreads <= 1 point; not cash SPX'}
     return unavailable
 
 def advance_basis(frame, bars, state):

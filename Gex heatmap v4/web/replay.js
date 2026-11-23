@@ -131,6 +131,21 @@ export function spxProxy(spyPrice, spxFrames, cutoff){
     anchors.push({day,basis,rawBasis:raw,at:received,quoted,close,ref,spy:spy.c});
   }
   anchors.sort((a,b)=>a.at-b.at);
+  // Bootstrap today's display from an explicitly estimated parity reference
+  // when no next-expiry anchor exists. Never apply it to earlier candles.
+  if(!anchors.some(a=>a.day===marketDate(cutoff))){
+    for(const frame of spxFrames??[]){
+      const ref=frame.spot,received=Date.parse(frame.collectedAt),quoted=Date.parse(ref?.at);
+      if(frame.symbol!=='SPXW'||!ref?.estimated||!ref.source?.startsWith('SPXW call/put mids')||
+        !finite(ref.value)||received>cutoff||quoted>received||received-quoted>90000||marketDate(received)!==marketDate(cutoff))continue;
+      const spy=spyBars.filter(b=>{const end=Date.parse(b.at)+sourceMinutes*60000;return end<=quoted&&quoted-end<=90000;}).at(-1);
+      if(!spy)continue;
+      const basis=ref.value-10*spy.c;if(!finite(basis)||Math.abs(basis)>200)continue;
+      anchors.push({day:marketDate(received),basis,at:received,quoted,close:Date.parse(frame.sessionClose),
+        ref:{value:ref.value,expiry:ref.referenceExpiry},spy:spy.c,fallback:true});
+    }
+    anchors.sort((a,b)=>a.at-b.at);
+  }
   const bars=[];let anchor=null,index=0,latest=null;
   for(const b of spyBars){
     const at=Date.parse(b.at),day=marketDate(at);
@@ -145,7 +160,7 @@ export function spxProxy(spyPrice, spxFrames, cutoff){
   return {available:true,bars,sessions:spyPrice?.sessions??{},barMinutes:sourceMinutes,priceSymbol:'SPX_PROXY',basis:latest.basis,
     refAt:new Date(latest.quoted).toISOString(),capturedAt:new Date(latest.at).toISOString(),
     refPrice:latest.ref.value,spyPrice:latest.spy,referenceExpiry:latest.ref.expiry,
-    stale:cutoff-latest.quoted>90000,locked,quality:locked?(eth?'ETH · Locked Basis':'Locked Basis'):'Rolling Basis',
+    stale:cutoff-latest.quoted>90000,locked,quality:latest.fallback?'Estimated parity basis':locked?(eth?'ETH · Locked Basis':'Locked Basis'):'Rolling Basis',
     model:'SPY × 10 + observed next-expiry basis · median 12 · max step 0.20 · lock RTH close−5m',
     source:'OpenD SPY + SPXW next-expiry basis proxy',calibrations:anchors.length,
     lastBarAt:bars.at(-1).at,reason:locked?'Calibration locked; SPY bars continue independently':null};
